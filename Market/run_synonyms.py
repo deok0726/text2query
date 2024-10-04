@@ -73,13 +73,10 @@ def generate_sql_with_synonyms(llm, db, db_path, question):
     print(table_and_column_info_txt)
     few_shot_examples = '''
         Example 1)
-        Question: 24.06.04~24.06.30 기간 이벤트 응모
-        SQLQuery: "STDT BETWEEN '20240604' AND '20240630'"
-
-        Example 2)
-        Question: 10000원 이상 사용
-        SQLQuery: "SL_AM > 10000"
-
+        Question: 24.06.04~24.06.30 기간 내에 이벤트 응모하고, 단기카드대출을 10000원 이상 이용한 고객 리스트를 중복이 없도록 뽑아줘.
+        SQLQuery: "SELECT DISTINCT T1.CNO FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%' AND T3.STDT BETWEEN '20240604' AND '20240630' AND T3.SL_AM > 10000;"
+        SQLResult: [('12345678901',)]
+        Answer: 24.06.04~24.06.30 기간 내에 이벤트 응모하고, 단기카드대출을 10,000원 이상 이용한 고객은 12345678901, 1명입니다.
     '''
 
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
@@ -98,11 +95,15 @@ def generate_sql_with_synonyms(llm, db, db_path, question):
         
         {table_and_column_info}.
 
+        You can check some examples of results:
+
+        {few_shot_examples}
+
         Question: {input}'''
     
     prompt = PromptTemplate.from_template(template)
     query_chain = create_sql_query_chain(llm, db, prompt=prompt)
-    generated_sql_query = query_chain.invoke({"table_info": db.get_table_info(), "table_and_column_info": table_and_column_info_txt, "input": question, "dialect": db.dialect, "top_k": 1})
+    generated_sql_query = query_chain.invoke({"table_info": db.get_table_info(), "table_and_column_info": table_and_column_info_txt, "input": question, "dialect": db.dialect, "top_k": 1, "few_shot_examples": few_shot_examples})
 
     return generated_sql_query
 

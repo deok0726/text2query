@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import logging
 from openai import OpenAI
 from operator import itemgetter
@@ -13,7 +14,7 @@ from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
 load_dotenv(dotenv_path)
 api_key = os.getenv("OPENAI_API_KEY")
@@ -61,28 +62,112 @@ def sql_result(llm, db, question):
 
         {table_info}.
 
+        Do not use non-existent tables or columns.
+
         Question: {input}'''
     prompt = PromptTemplate.from_template(template)
-
     query_chain = create_sql_query_chain(llm, db, prompt=prompt)
     generated_sql_query = query_chain.invoke({"table_info": db.get_table_info(), "input": question, "dialect": db.dialect, "top_k": 1})
-
-    print(generated_sql_query.__repr__())
+    print("SQL query: ", generated_sql_query.__repr__())
+    
     execute = QuerySQLDataBaseTool(db=db)
-    try:
-        result = execute.invoke({"query": generated_sql_query})
+    result = execute.invoke({"query": generated_sql_query})
+    
+    if "OperationalError" in result:
+        print(f"Error executing SQL query: {result}")
+        error_message = str(result)
+
+        new_template = '''
+            The following SQL query resulted in an error: {sql_query}
+
+            Error: {error_message}
+
+            Based on the provided table and column information, please correct the SQL query.
+
+            {table_info}
+
+            Question: {input}
+
+            SQLQuery: '''
+        
+        # tables = db.get_usable_table_names()
+        # table_info = {}
+
+        # for table in tables:
+        #     table_columns = db.get_table_info(table)
+        #     column_names = [col["name"] for col in table_columns]
+        #     table_info[table] = column_names
+
+        # table_info_str = "\n".join([f"Table: {table}, Columns: {', '.join(columns)}" for table, columns in table_info.items()])
+
+        prompt = PromptTemplate.from_template(new_template)
+        query_chain = create_sql_query_chain(llm, db, prompt=prompt)
+        corrected_sql_query = query_chain.invoke({"sql_query": result, "table_info": db.get_table_info(), "input": question, "error_message": error_message})
+        
+        result = execute.invoke({"query": corrected_sql_query})
         print("-"*200)
         print(result)
+
+        answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
+        print(answer)
+    else:
+        result = execute.invoke({"query": generated_sql_query})
+        print("-"*200)
+        print("SQL result: ", result)
 
         answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
         print(answer)
 
-        # result = execute.invoke({"query": "SELECT T1.MC_NM, T2.APR_DTTI, T2.CDNO, T2.DE_DT, T2.CNO, T2.APR_DE_AM FROM LM_TB_MC AS T1 INNER JOIN LP_TB_TBAUTH AS T2 ON T1.MCNO = T2.MCNO WHERE T1.MC_NM = '스타벅스'"})
-    except Exception as e:
-       print("-"*200)
-       print(f"Error: {e}")
-       print(generated_sql_query.__repr__())
+    # try:
+    #     result = execute.invoke({"query": generated_sql_query})
+    #     print("-"*200)
+    #     print("SQL result: ", result)
 
+    #     answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+    #     print(answer)
+    # except sqlite3.OperationalError as e:
+    #     # SQL 쿼리 실행 중 발생한 OperationalError 예외 처리
+    #     print("-" * 200)
+    #     print(f"Error executing SQL query: {e}")
+    #     error_message = str(e)
+
+    #     new_template = '''
+    #         The following SQL query resulted in an error: {sql_query}
+
+    #         Error: {error_message}
+
+    #         Based on the provided table and column information, please correct the SQL query.
+
+    #         {table_info}
+
+    #         Question: {input}
+
+    #         SQLQuery: '''
+        
+    #     tables = db.get_usable_table_names()
+    #     table_info = {}
+
+    #     for table in tables:
+    #         table_columns = db.get_table_info(table)
+    #         column_names = [col["name"] for col in table_columns]
+    #         table_info[table] = column_names
+
+    #     table_info_str = "\n".join([f"Table: {table}, Columns: {', '.join(columns)}" for table, columns in table_info.items()])
+
+    #     prompt = PromptTemplate.from_template(new_template)
+    #     query_chain = create_sql_query_chain(llm, db, prompt=prompt)
+    #     corrected_sql_query = query_chain.invoke({"sql_query": result, "table_info": table_info_str, "input": question, "error_message": error_message})
+        
+    #     result = execute.invoke({"query": corrected_sql_query})
+    #     print("-"*200)
+    #     print(result)
+
+    #     answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
+    #     print(answer)
+
+    # except Exception as e:
+    #     print("-" * 200)
+    #     print(f"Error: {e}")
 
 if __name__ == "__main__":
     db_name = input("Input DB name: ")
@@ -92,7 +177,9 @@ if __name__ == "__main__":
 
     db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
     print(db.dialect)
+
     print(db.get_usable_table_names())
+    tables = db.get_usable_table_names()
     # print(db.get_table_info())
     print("-"*200)
     question = input("DB 질문을 입력하세요: ")
