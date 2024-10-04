@@ -1,6 +1,8 @@
-import sqlite3
+import os
+import logging
+from openai import OpenAI
 from operator import itemgetter
-
+from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain_community.llms import Ollama
@@ -9,9 +11,12 @@ from langchain_community.tools.sql_database.tool import QuerySQLDataBaseTool
 from langchain.chains import create_sql_query_chain
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-import sqlite3
-import logging
+from dotenv import load_dotenv
+
 logging.basicConfig(level=logging.DEBUG)
+dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
+load_dotenv(dotenv_path)
+api_key = os.getenv("OPENAI_API_KEY")
 
 def generate_natural_language_answer(llm, question, sql_query, sql_result):
     # 프롬프트 템플릿 정의
@@ -23,10 +28,10 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
     SQL Result: {sql_result}
 
     Answer: '''
-    
+
     answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
     response = llm(answer_prompt)
-    
+
     return response
 
 def sql_result(llm, db, question):
@@ -85,14 +90,14 @@ def sql_result(llm, db, question):
 
 if __name__ == "__main__":
     db_name = input("Input DB name: ")
-    llm = Ollama(model="llama3.1:70b", temperature=0)
+    # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
-    
-    
+    llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
     db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
     print(db.dialect)
     print(db.get_usable_table_names())
+    print(db.get_table_info())
     print("-"*200)
     question = input("DB 질문을 입력하세요: ")
     # question = "스타벅스에서 결제한 전체 내역을 보여줘"
