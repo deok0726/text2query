@@ -38,17 +38,39 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
 def sql_result(llm, db, question):
     few_shot_examples = '''
         Example 1)
-        Question: LG전자에서 사용한 총 금액을 알려줘
-        SQLQuery: "SELECT SUM(APR_DE_AM) FROM LP_TB_TBAUTH AS T1 INNER JOIN LM_TB_MC AS T2 ON T1.MCNO = T2.MCNO WHERE T2.MC_NM = 'LG전자';"
-        SQLResult: 51000000
-        Answer: LG전자에서 사용한 총 금액은 51000000 원 입니다.
-
+        Question: 24.06.01~24.07.31 기간 동안 이벤트에 응모하고, 앱으로 단기카드대출을 10000원 이상 이용한 고객 리스트를 뽑아줘.
+        SQLQuery: "SELECT DISTINCT T1.CNO FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%' AND T3.STDT BETWEEN '20240604' AND '20240630' AND T3.SL_PD_DC = 3 AND T3.SL_AM > 10000;"
+        SQLResult: [('123456789010000', '345678901230000')]
+        Answer: 24.06.04~24.06.30 기간 내에 앱으로 단기카드대출을 10000원 이상 이용한 이벤트 응모 고객은 '123456789010000', '345678901230000'로 2 명 입니다.
+        
         Example 2)
-        Question: 지금까지 치킨을 몇 번 시켜먹었는지 알려줘
-        SQLQuery: "SELECT COUNT(*) FROM LP_TB_TBAUTH AS T1 INNER JOIN LM_TB_MC AS T2 ON T1.MCNO = T2.MCNO WHERE T2.MC_NM LIKE '%치킨%';"
-        SQLResult: 3
-        Answer: 지금까지 치킨을 5 번 시켜먹었습니다.
+        Question: 24.06.04~24.06.30 기간 내에 이벤트에 응모하고, 앱을 통해 단기카드대출을 10000원 이상 이용한 고객을 뽑아줘. 추출된 고객 수를 UMS메시지의 이벤트 제공 혜택 포인트와 곱해서 최종적으로 산출된 오퍼 금액을 알려줘.
+        SQLQuery: "SELECT COUNT(DISTINCT T1.CNO) * 10000 AS TotalOfferAmount FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%' AND T3.STDT BETWEEN '20240604' AND '20240630' AND T3.SL_AM > 10000 AND T3.SL_PD_DC = 3 AND T2.UMS_MSG_DTL_CN LIKE '%띵코인 1만 포인트 적립%';"
+        SQLResult: 20000
+        Answer: 24.06.04~24.06.30 기간 내에 단기카드대출을 10000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 띵코인 20000 포인트 입니다.
+        
+        Example 3)
+        Question: 24.06.01~24.07.31 기간 내에 이벤트에 응모하고, 일시불로 1000원 이상 결제한 고객을 뽑아줘. 추출된 고객 수를 UMS메시지의 이벤트 제공 혜택 금액과 곱해서 최종적으로 산출된 오퍼 금액을 알려줘.
+        SQLQuery: "SELECT COUNT(DISTINCT T1.CNO) * 10000 AS TotalOfferAmount FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%일시불%' AND T3.STDT BETWEEN '20240601' AND '20240731' AND T3.SL_AM > 1000 AND T3.SL_PD_DC = 1 AND T2.UMS_MSG_DTL_CN LIKE '%현금 1만%';"
+        SQLResult: 20000
+        Answer: 24.06.04~24.06.30 기간 내에 일시불을 1000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 20000 원 입니다.
     '''
+
+    # template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
+    #     Use the following format:
+
+    #     Question: "Question here"
+    #     SQLQuery: "SQL Query to run"
+    #     SQLResult: "Result of the SQLQuery"
+    #     Answer: "Final answer here"
+
+    #     Only use the following tables:
+
+    #     {table_info}.
+
+    #     DO NOT use non-existent tables or columns.
+
+    #     Question: {input}'''
 
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
         Use the following format:
@@ -62,61 +84,80 @@ def sql_result(llm, db, question):
 
         {table_info}.
 
-        Do not use non-existent tables or columns.
+        Here are some examples of previous questions and their corresponding SQL queries to help you understand the expected format:
+
+        {few_shot_examples}
+
+        Please generate a new SQL query based on the following question without referencing the previous examples directly:
 
         Question: {input}'''
+    
     prompt = PromptTemplate.from_template(template)
     query_chain = create_sql_query_chain(llm, db, prompt=prompt)
-    generated_sql_query = query_chain.invoke({"table_info": db.get_table_info(), "input": question, "dialect": db.dialect, "top_k": 1})
+    # generated_sql_query = query_chain.invoke({"table_info": db.get_table_info(), "input": question, "dialect": db.dialect, "top_k": 1})
+    generated_sql_query = query_chain.invoke({
+        "table_info": db.get_table_info(), 
+        "input": question, 
+        "dialect": db.dialect, 
+        "top_k": 1, 
+        "few_shot_examples": few_shot_examples})
     print("SQL query: ", generated_sql_query.__repr__())
     
     execute = QuerySQLDataBaseTool(db=db)
-    result = execute.invoke({"query": generated_sql_query})
     
-    if "OperationalError" in result:
-        print(f"Error executing SQL query: {result}")
-        error_message = str(result)
+    fix = 1
+    retry = 4
+    final = None
+    result = execute.invoke({"query": generated_sql_query})
+    while (fix < retry) :
+        if "OperationalError" in result:
+            print(f"Try {fix}...")
+            print(f"### Error executing SQL query ### \n{result}")
+            error_message = str(result)
 
-        new_template = '''
-            The following SQL query resulted in an error: {sql_query}
+            fixed_template = '''
+                The following SQL query resulted in an error: {sql_query}
 
-            Error: {error_message}
+                Error: {error_message}
 
-            Based on the provided table and column information, please correct the SQL query.
+                Based on the provided table and column information, please correct the SQL query.
 
-            {table_info}
+                {table_info}
 
-            Question: {input}
+                Question: {input}
 
-            SQLQuery: '''
-        
-        # tables = db.get_usable_table_names()
-        # table_info = {}
+                Only reproduce corrected top {top_k} SQL query. Generate an SQL query without any additional formatting. The query should start directly with SELECT. 
+                
+                SQLQuery: '''
 
-        # for table in tables:
-        #     table_columns = db.get_table_info(table)
-        #     column_names = [col["name"] for col in table_columns]
-        #     table_info[table] = column_names
+            prompt = PromptTemplate.from_template(fixed_template)
+            query_chain = create_sql_query_chain(llm, db, prompt=prompt)
+            corrected_sql_query = query_chain.invoke({
+                "sql_query": result, 
+                "table_info": db.get_table_info(), 
+                "input": question, 
+                "top_k": 1, 
+                "error_message": error_message})
+            
+            result = execute.invoke({"query": corrected_sql_query})
+            # print("-"*200)
+            # print(result)
 
-        # table_info_str = "\n".join([f"Table: {table}, Columns: {', '.join(columns)}" for table, columns in table_info.items()])
+            # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
+            # print(answer)
+        else:
+            final = result
+            # result = execute.invoke({"query": generated_sql_query})
+            print("-"*200)
+            print("SQL result: ", result)
 
-        prompt = PromptTemplate.from_template(new_template)
-        query_chain = create_sql_query_chain(llm, db, prompt=prompt)
-        corrected_sql_query = query_chain.invoke({"sql_query": result, "table_info": db.get_table_info(), "input": question, "error_message": error_message})
-        
-        result = execute.invoke({"query": corrected_sql_query})
-        print("-"*200)
-        print(result)
-
-        answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
-        print(answer)
-    else:
-        result = execute.invoke({"query": generated_sql_query})
-        print("-"*200)
-        print("SQL result: ", result)
-
-        answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
-        print(answer)
+            answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+            print(answer)
+            break
+        fix += 1
+    
+    if final is None:
+        print("##### SQL Execution Error No Result #####")
 
     # try:
     #     result = execute.invoke({"query": generated_sql_query})
@@ -171,7 +212,8 @@ def sql_result(llm, db, question):
 
 if __name__ == "__main__":
     db_name = input("Input DB name: ")
-    llm = Ollama(model="llama3.1:70b", temperature=0)
+    llm = Ollama(model="llama3.1:latest", temperature=0)
+    # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
     # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
@@ -179,7 +221,6 @@ if __name__ == "__main__":
     print(db.dialect)
 
     print(db.get_usable_table_names())
-    tables = db.get_usable_table_names()
     # print(db.get_table_info())
     print("-"*200)
     question = input("DB 질문을 입력하세요: ")
