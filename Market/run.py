@@ -46,14 +46,14 @@ def sql_result(llm, db, question):
         Example 2)
         Question: 24.06.04~24.06.30 기간 내에 이벤트에 응모하고, 앱을 통해 단기카드대출을 10000원 이상 이용한 고객을 뽑아줘. 추출된 고객 수를 UMS메시지의 이벤트 제공 혜택 포인트와 곱해서 최종적으로 산출된 오퍼 금액을 알려줘.
         SQLQuery: "SELECT COUNT(DISTINCT T1.CNO) * 10000 AS TotalOfferAmount FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%' AND T3.STDT BETWEEN '20240604' AND '20240630' AND T3.SL_AM > 10000 AND T3.SL_PD_DC = 3 AND T2.UMS_MSG_DTL_CN LIKE '%띵코인 1만 포인트 적립%';"
-        SQLResult: 20000
+        SQLResult: [(20000,)]
         Answer: 24.06.04~24.06.30 기간 내에 단기카드대출을 10000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 띵코인 20000 포인트 입니다.
         
         Example 3)
         Question: 24.06.01~24.07.31 기간 내에 이벤트에 응모하고, 일시불로 1000원 이상 결제한 고객을 뽑아줘. 추출된 고객 수를 UMS메시지의 이벤트 제공 혜택 금액과 곱해서 최종적으로 산출된 오퍼 금액을 알려줘.
-        SQLQuery: "SELECT COUNT(DISTINCT T1.CNO) * 10000 AS TotalOfferAmount FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%일시불%' AND T3.STDT BETWEEN '20240601' AND '20240731' AND T3.SL_AM > 1000 AND T3.SL_PD_DC = 1 AND T2.UMS_MSG_DTL_CN LIKE '%현금 1만%';"
-        SQLResult: 20000
-        Answer: 24.06.04~24.06.30 기간 내에 일시불을 1000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 20000 원 입니다.
+        SQLQuery: "SELECT COUNT(DISTINCT T1.CNO) * 5000 AS TotalOfferAmount FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%일시불%' AND T3.STDT BETWEEN '20240601' AND '20240731' AND T3.SL_AM > 1000 AND T3.SL_PD_DC = 1 AND T2.UMS_MSG_DTL_CN LIKE '%현금 5천 원%';"
+        SQLResult: [(10000,)]
+        Answer: 24.06.01~24.07.31 기간 내에 일시불을 1000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 10000 원 입니다.
     '''
 
     # template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
@@ -212,10 +212,10 @@ def sql_result(llm, db, question):
 
 if __name__ == "__main__":
     db_name = input("Input DB name: ")
-    llm = Ollama(model="llama3.1:latest", temperature=0)
+    # llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
-    # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
+    llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
     db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
     print(db.dialect)

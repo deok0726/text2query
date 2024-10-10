@@ -1,4 +1,5 @@
-import os, sys
+import os
+import sqlite3
 import logging
 from openai import OpenAI
 from operator import itemgetter
@@ -13,7 +14,7 @@ from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
 load_dotenv(dotenv_path)
 api_key = os.getenv("OPENAI_API_KEY")
@@ -28,10 +29,10 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
     SQL Result: {sql_result}
 
     Answer: '''
-
+    
     answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
-    response = llm(answer_prompt)
-
+    response = llm.invoke(answer_prompt)
+    
     return response
 
 def sql_result(llm, db, question):
@@ -61,45 +62,95 @@ def sql_result(llm, db, question):
 
         {table_info}.
 
-        You can check some examples of results:
+        Here are some examples of previous questions and their corresponding SQL queries to help you understand the expected format:
 
         {few_shot_examples}
 
+        Please generate a new SQL query based on the following question without referencing the previous examples directly:
+
         Question: {input}'''
+    
     prompt = PromptTemplate.from_template(template)
-
     query_chain = create_sql_query_chain(llm, db, prompt=prompt)
-    generated_sql_query = query_chain.invoke({"table_info": db.get_table_info(), "input": question, "dialect": db.dialect, "top_k": 1, "few_shot_examples": few_shot_examples})
-
-    print(generated_sql_query.__repr__())
+    # generated_sql_query = query_chain.invoke({"table_info": db.get_table_info(), "input": question, "dialect": db.dialect, "top_k": 1})
+    generated_sql_query = query_chain.invoke({
+        "table_info": db.get_table_info(), 
+        "input": question, 
+        "dialect": db.dialect, 
+        "top_k": 1, 
+        "few_shot_examples": few_shot_examples})
+    print("SQL query: ", generated_sql_query.__repr__())
+    
     execute = QuerySQLDataBaseTool(db=db)
-    try:
-        result = execute.invoke({"query": generated_sql_query})
-        print("-"*200)
-        print(result)
+    
+    fix = 1
+    retry = 4
+    final = None
+    result = execute.invoke({"query": generated_sql_query})
+    while (fix < retry) :
+        if "OperationalError" in result:
+            print(f"Try {fix}...")
+            print(f"### Error executing SQL query ### \n{result}")
+            error_message = str(result)
 
-        answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
-        print(answer)
+            fixed_template = '''
+                The following SQL query resulted in an error: {sql_query}
 
-        # result = execute.invoke({"query": "SELECT T1.MC_NM, T2.APR_DTTI, T2.CDNO, T2.DE_DT, T2.CNO, T2.APR_DE_AM FROM LM_TB_MC AS T1 INNER JOIN LP_TB_TBAUTH AS T2 ON T1.MCNO = T2.MCNO WHERE T1.MC_NM = '스타벅스'"})
-    except Exception as e:
-       print("-"*200)
-       print(f"Error: {e}")
-       print(generated_sql_query.__repr__())
+                Error: {error_message}
 
+                Based on the provided table and column information, please correct the SQL query.
+
+                {table_info}
+
+                Question: {input}
+
+                Only reproduce corrected top {top_k} SQL query. Generate an SQL query without any additional formatting. The query should start directly with SELECT. 
+                
+                SQLQuery: '''
+
+            prompt = PromptTemplate.from_template(fixed_template)
+            query_chain = create_sql_query_chain(llm, db, prompt=prompt)
+            corrected_sql_query = query_chain.invoke({
+                "sql_query": result, 
+                "table_info": db.get_table_info(), 
+                "input": question, 
+                "top_k": 1, 
+                "error_message": error_message})
+            
+            result = execute.invoke({"query": corrected_sql_query})
+            # print("-"*200)
+            # print(result)
+
+            # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
+            # print(answer)
+        else:
+            final = result
+            print("-"*200)
+            print("SQL query: ", corrected_sql_query)
+            print("SQL result: ", result)
+
+            answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+            print(answer)
+            break
+        fix += 1
+    
+    if final is None:
+        print("##### SQL Execution Error No Result #####")
 
 if __name__ == "__main__":
     db_name = input("Input DB name: ")
+    # llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
     llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
     db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
     print(db.dialect)
+
     print(db.get_usable_table_names())
     # print(db.get_table_info())
     print("-"*200)
     # question = input("DB 질문을 입력하세요: ")
-    question = "LG전자에서 프로모션 기간 (2024.09.01~2024.10.31) 동안 아멕스카드로 결제한 고객을 알려줘"
+    question = "LG전자에서 프로모션 기간 (2024.09.01~2024.10.31) 동안 비자카드로 결제한 고객번호를 알려줘"
 
     sql_result(llm, db, question)
