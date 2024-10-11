@@ -224,6 +224,6 @@ if __name__ == "__main__":
     # print(db.get_table_info())
     print("-"*200)
     question = input("DB 질문을 입력하세요: ")
-    # question = "스타벅스에서 결제한 전체 내역을 보여줘"
+    
 
     sql_result(llm, db, question)

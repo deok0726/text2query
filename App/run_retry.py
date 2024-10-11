@@ -38,16 +38,10 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
 def sql_result(llm, db, question):
     few_shot_examples = '''
         Example 1)
-        Question: LG전자에서 사용한 총 금액을 알려줘
-        SQLQuery: "SELECT SUM(APR_DE_AM) FROM LP_TB_TBAUTH AS T1 INNER JOIN LM_TB_MC AS T2 ON T1.MCNO = T2.MCNO WHERE T2.MC_NM = 'LG전자';"
-        SQLResult: 51000000
-        Answer: LG전자에서 사용한 총 금액은 51000000 원 입니다.
-
-        Example 2)
-        Question: 지금까지 치킨을 몇 번 시켜먹었는지 알려줘
-        SQLQuery: "SELECT COUNT(*) FROM LP_TB_TBAUTH AS T1 INNER JOIN LM_TB_MC AS T2 ON T1.MCNO = T2.MCNO WHERE T2.MC_NM LIKE '%치킨%';"
-        SQLResult: 3
-        Answer: 지금까지 치킨을 5 번 시켜먹었습니다.
+        Question: LG전자에서 9월 동안 받은 혜택 금액을 알려줘
+        SQLQuery: SELECT SUM(T1.SL_AM)-SUM(BIL_PRN) AS BENEFIT FROM WBM_V_BLL_SPEC_IZ AS T1 INNER JOIN LM_TB_MC AS T2 ON T1.DAF_MCNO = T2.MCNO WHERE T2.MC_NM = 'LG전자' AND SUBSTR(T1.SL_DT, 5, 2) = '09';
+        SQLResult: [(2301000,)]
+        Answer: 9월 한 달 동안 LG전자에서 받은 혜택 금액은 2,301,000 원입니다.
     '''
 
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
@@ -138,19 +132,22 @@ def sql_result(llm, db, question):
         print("##### SQL Execution Error No Result #####")
 
 if __name__ == "__main__":
-    db_name = input("Input DB name: ")
+    # db_name = input("Input DB name: ")
     # llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
     llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
-    db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
+    # db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
+    db = SQLDatabase.from_uri("sqlite:///app.db")
     print(db.dialect)
 
     print(db.get_usable_table_names())
     # print(db.get_table_info())
     print("-"*200)
     # question = input("DB 질문을 입력하세요: ")
-    question = "LG전자에서 프로모션 기간 (2024.09.01~2024.10.31) 동안 비자카드로 결제한 고객번호를 알려줘"
+    # question = "최근 두 달 동안 LG전자에서 받은 혜택 금액을 알려줘"
+    # question = "지난 달 가장 돈을 많이 쓴 매장을 알려줘"
+    question = "10월에 스타벅스를 몇 번 방문했는지 알려줘"
 
     sql_result(llm, db, question)

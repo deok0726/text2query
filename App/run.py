@@ -13,7 +13,7 @@ from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
 load_dotenv(dotenv_path)
 api_key = os.getenv("OPENAI_API_KEY")
@@ -90,9 +90,9 @@ def sql_result(llm, db, question):
 
 if __name__ == "__main__":
     db_name = input("Input DB name: ")
-    # llm = Ollama(model="llama3.1:70b", temperature=0)
+    llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
-    llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
+    # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
     db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
     print(db.dialect)
@@ -100,6 +100,6 @@ if __name__ == "__main__":
     # print(db.get_table_info())
     print("-"*200)
     # question = input("DB 질문을 입력하세요: ")
-    question = "LG전자에서 프로모션 기간 (2024.09.01~2024.10.31) 동안 아멕스카드로 결제한 고객을 알려줘"
+    question = "9월 한 달 동안 로카라이킷 카드로 받은 혜택 금액을 알려줘"
 
     sql_result(llm, db, question)
