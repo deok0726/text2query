@@ -1,4 +1,4 @@
-import os
+import os, sys
 import sqlite3
 import logging
 from openai import OpenAI
@@ -38,12 +38,115 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
 def sql_result(llm, db, question):
     few_shot_examples = '''
         Example 1)
-        Question: LG전자에서 9월 동안 받은 혜택 금액을 알려줘
-        SQLQuery: SELECT SUM(T1.SL_AM)-SUM(BIL_PRN) AS BENEFIT FROM WBM_V_BLL_SPEC_IZ AS T1 INNER JOIN LM_TB_MC AS T2 ON T1.DAF_MCNO = T2.MCNO WHERE T2.MC_NM = 'LG전자' AND SUBSTR(T1.SL_DT, 5, 2) = '09';
-        SQLResult: [(2301000,)]
-        Answer: 9월 한 달 동안 LG전자에서 받은 혜택 금액은 2,301,000 원입니다.
+        Question: 24. 7~9월까지 '70018819695' 고객이 스타벅스에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 할인 한도가 얼마나 남았는지 알려줘
+        SQLQuery: WITH monthly_discounts AS (
+                    SELECT 
+                        strftime('%Y-%m', SL_DT) AS month,
+                        SUM(BLL_SV_AM) AS total_discount
+                    FROM 
+                        WBM_T_BLL_SPEC_IZ
+                    WHERE 
+                        ACCTNO = '70018819695'
+                        AND SL_DT BETWEEN '20240701' AND '20240930'
+                        AND BLL_MC_NM LIKE '%스타벅스%'
+                        AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)
+                    GROUP BY 
+                        strftime('%Y-%m', SL_DT)
+                ),
+                total_spent AS (
+                    SELECT 
+                        SUM(COALESCE(BIL_PRN, SL_AM)) AS total_spent
+                    FROM 
+                        WBM_T_BLL_SPEC_IZ
+                    WHERE 
+                        ACCTNO = '70018819695'
+                        AND SL_DT BETWEEN '20240701' AND '20240930'
+                        AND BLL_MC_NM LIKE '%스타벅스%'
+                ),
+                total_discounted AS (
+                    SELECT 
+                        SUM(BLL_SV_AM) AS total_discounted
+                    FROM 
+                        WBM_T_BLL_SPEC_IZ
+                    WHERE 
+                        ACCTNO = '70018819695'
+                        AND SL_DT BETWEEN '20240701' AND '20240930'
+                        AND BLL_MC_NM LIKE '%스타벅스%'
+                        AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)
+                )
+                SELECT 
+                    (SELECT total_spent FROM total_spent) AS total_spent,
+                    (SELECT total_discounted FROM total_discounted) AS total_discounted,
+                    (SELECT MLIM_AM FROM WPD_T_SV_SNGL_PRP_INF WHERE SV_C = 'SP03608') - COALESCE((SELECT total_discount FROM monthly_discounts WHERE month = strftime('%Y-%m', 'now')), 0) AS remaining_discount_limit;
+
+        SQLResult: [(101660, 16040, 10000)]
+        Answer: 고객 '70018819695'는 7월부터 9월까지 스타벅스에서 총 101,660원을 사용했습니다. 보유한 카드 중 할인 가능한 상품을 통해 16,040원의 할인을 받았으며, 현재 할인 한도는 10,000원이 남았습니다.
     '''
 
+    few_shots = '''
+        Example 1)
+        Question: 24. 7~9월까지 'A' 고객이 OOO에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘
+        SQLQuery: WITH monthly_discounts AS (
+                        SELECT strftime(
+                                '%Y-%m',
+                                substr(SL_DT, 1, 4) || '-' || substr(SL_DT, 5, 2) || '-' || substr(SL_DT, 7, 2)
+                            ) AS month,
+                            SUM(BLL_SV_AM) AS total_discount
+                        FROM WBM_T_BLL_SPEC_IZ
+                        WHERE ACCTNO = 'A'
+                            AND SL_DT BETWEEN strftime('%Y%m%d', date('now', 'start of month')) AND strftime('%Y%m%d', date('now', 'start of month', '+1 month', '-1 day'))
+                            AND BLL_MC_NM LIKE '%OOO%'
+                            AND BLL_SV_DC IN (
+                                SELECT SV_C
+                                FROM WPD_T_SV_SNGL_PRP_INF
+                            )
+                        GROUP BY strftime(
+                                '%Y-%m',
+                                substr(SL_DT, 1, 4) || '-' || substr(SL_DT, 5, 2) || '-' || substr(SL_DT, 7, 2)
+                            )
+                    ),
+                    total_spent AS (
+                        SELECT SUM(COALESCE(BIL_PRN, SL_AM)) AS total_spent
+                        FROM WBM_T_BLL_SPEC_IZ
+                        WHERE ACCTNO = 'A'
+                            AND SL_DT BETWEEN '20240701' AND '20240930'
+                            AND BLL_MC_NM LIKE '%OOO%'
+                    ),
+                    total_discounted AS (
+                        SELECT SUM(BLL_SV_AM) AS total_discounted
+                        FROM WBM_T_BLL_SPEC_IZ
+                        WHERE ACCTNO = 'A'
+                            AND SL_DT BETWEEN '20240701' AND '20240930'
+                            AND BLL_MC_NM LIKE '%OOO%'
+                            AND BLL_SV_DC IN (
+                                SELECT SV_C
+                                FROM WPD_T_SV_SNGL_PRP_INF
+                            )
+                    )
+                    SELECT (
+                            SELECT total_spent
+                            FROM total_spent
+                        ) AS total_spent,
+                        (
+                            SELECT total_discounted
+                            FROM total_discounted
+                        ) AS total_discounted,
+                        (
+                            SELECT MLIM_AM
+                            FROM WPD_T_SV_SNGL_PRP_INF
+                            WHERE SV_C = 'SP03608'
+                        ) - COALESCE(
+                            (
+                                SELECT total_discount
+                                FROM monthly_discounts
+                                WHERE month = strftime('%Y-%m', 'now')
+                            ),
+                            0
+                        ) AS remaining_discount_limit;
+
+        SQLResult: [(101660, 16040, 4540)]
+        Answer: 고객 'A'는 7월부터 9월까지 OOO에서 총 101,660원을 사용했습니다. 보유한 카드 중 할인 가능한 상품을 통해 16,040원의 할인을 받았으며, 이번 달 할인 한도는 4,540원이 남았습니다.
+    '''
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
         Use the following format:
 
@@ -72,7 +175,7 @@ def sql_result(llm, db, question):
         "input": question, 
         "dialect": db.dialect, 
         "top_k": 1, 
-        "few_shot_examples": few_shot_examples})
+        "few_shot_examples": few_shots})
     print("SQL query: ", generated_sql_query.__repr__())
     
     execute = QuerySQLDataBaseTool(db=db)
@@ -139,15 +242,14 @@ if __name__ == "__main__":
     llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
     # db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
-    db = SQLDatabase.from_uri("sqlite:///app.db")
+    db = SQLDatabase.from_uri("sqlite:///data_v2.db")
     print(db.dialect)
 
     print(db.get_usable_table_names())
     # print(db.get_table_info())
     print("-"*200)
     # question = input("DB 질문을 입력하세요: ")
-    # question = "최근 두 달 동안 LG전자에서 받은 혜택 금액을 알려줘"
-    # question = "지난 달 가장 돈을 많이 쓴 매장을 알려줘"
-    question = "10월에 스타벅스를 몇 번 방문했는지 알려줘"
+    # question = "24. 7~9월까지 '70018819695' 고객이 스타벅스에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘"
+    question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제일 별 결제금액을 알려줘. 그리고 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘"
 
     sql_result(llm, db, question)
