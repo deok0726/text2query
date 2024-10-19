@@ -55,22 +55,6 @@ def sql_result(llm, db, question):
         Answer: 24.06.01~24.07.31 기간 내에 일시불을 1000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 10000 원 입니다.
     '''
 
-    # template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
-    #     Use the following format:
-
-    #     Question: "Question here"
-    #     SQLQuery: "SQL Query to run"
-    #     SQLResult: "Result of the SQLQuery"
-    #     Answer: "Final answer here"
-
-    #     Only use the following tables:
-
-    #     {table_info}.
-
-    #     DO NOT use non-existent tables or columns.
-
-    #     Question: {input}'''
-
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
         Use the following format:
 
@@ -158,71 +142,16 @@ def sql_result(llm, db, question):
     if final is None:
         print("##### SQL Execution Error No Result #####")
 
-    # try:
-    #     result = execute.invoke({"query": generated_sql_query})
-    #     print("-"*200)
-    #     print("SQL result: ", result)
-
-    #     answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
-    #     print(answer)
-    # except sqlite3.OperationalError as e:
-    #     # SQL 쿼리 실행 중 발생한 OperationalError 예외 처리
-    #     print("-" * 200)
-    #     print(f"Error executing SQL query: {e}")
-    #     error_message = str(e)
-
-    #     new_template = '''
-    #         The following SQL query resulted in an error: {sql_query}
-
-    #         Error: {error_message}
-
-    #         Based on the provided table and column information, please correct the SQL query.
-
-    #         {table_info}
-
-    #         Question: {input}
-
-    #         SQLQuery: '''
-        
-    #     tables = db.get_usable_table_names()
-    #     table_info = {}
-
-    #     for table in tables:
-    #         table_columns = db.get_table_info(table)
-    #         column_names = [col["name"] for col in table_columns]
-    #         table_info[table] = column_names
-
-    #     table_info_str = "\n".join([f"Table: {table}, Columns: {', '.join(columns)}" for table, columns in table_info.items()])
-
-    #     prompt = PromptTemplate.from_template(new_template)
-    #     query_chain = create_sql_query_chain(llm, db, prompt=prompt)
-    #     corrected_sql_query = query_chain.invoke({"sql_query": result, "table_info": table_info_str, "input": question, "error_message": error_message})
-        
-    #     result = execute.invoke({"query": corrected_sql_query})
-    #     print("-"*200)
-    #     print(result)
-
-    #     answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
-    #     print(answer)
-
-    # except Exception as e:
-    #     print("-" * 200)
-    #     print(f"Error: {e}")
-
 if __name__ == "__main__":
-    # db_name = input("Input DB name: ")
     # llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
     llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
-    # db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
-    db = SQLDatabase.from_uri(f"sqlite:///market.db")
-    print(db.dialect)
-
+    db = SQLDatabase.from_uri(f"sqlite:///market_vf.db")
     print(db.get_usable_table_names())
-    # print(db.get_table_info())
     print("-"*200)
+
     # question = input("DB 질문을 입력하세요: ")0
     question = "24.06.04~24.06.30 기간 내에 이벤트 응모하고, 롯데카드로 앱에서 단기카드대출 10000원 이상 이용한 고객 리스트를 뽑아주세요. 고객들한테 나가야 하는 최종 혜택 금액도 계산해주세요."
 

@@ -146,6 +146,87 @@ def sql_result(llm, db, question):
 
         SQLResult: [(101660, 16040, 4540)]
         Answer: 고객 'A'는 7월부터 9월까지 OOO에서 총 101,660원을 사용했습니다. 보유한 카드 중 할인 가능한 상품을 통해 16,040원의 할인을 받았으며, 이번 달 할인 한도는 4,540원이 남았습니다.
+
+        Example 2)
+        Question: 24. 7~9월까지 'A' 고객이 OOO에서 사용한 결제일 별 결제금액을 알려줘, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘. 마지막으로, OOO와 관련해서 추천해줄만한 이벤트들이 있다면 그 내용을 요약해서 알려줘.
+        SQLQuery: SELECT (
+                    SELECT json_group_array(
+                            json_object(
+                                'month',
+                                month,
+                                'total_spent',
+                                total_spent
+                            )
+                        )
+                    FROM (
+                            SELECT strftime(
+                                    '%Y-%m',
+                                    substr(SL_DT, 1, 4) || '-' || substr(SL_DT, 5, 2) || '-' || substr(SL_DT, 7, 2)
+                                ) AS month,
+                                SUM(COALESCE(BIL_PRN, SL_AM)) AS total_spent
+                            FROM WBM_T_BLL_SPEC_IZ
+                            WHERE ACCTNO = 'A'
+                                AND SL_DT BETWEEN '20240701' AND '20240930'
+                                AND BLL_MC_NM LIKE '%OOO%'
+                            GROUP BY month
+                        )
+                ) AS monthly_spending,
+                (
+                    SELECT json_group_array(
+                            json_object(
+                                'month',
+                                month,
+                                'total_discount',
+                                total_discount
+                            )
+                        )
+                    FROM (
+                            SELECT strftime(
+                                    '%Y-%m',
+                                    substr(SL_DT, 1, 4) || '-' || substr(SL_DT, 5, 2) || '-' || substr(SL_DT, 7, 2)
+                                ) AS month,
+                                SUM(BLL_SV_AM) AS total_discount
+                            FROM WBM_T_BLL_SPEC_IZ
+                            WHERE ACCTNO = 'A'
+                                AND SL_DT BETWEEN '20240701' AND '20240930'
+                                AND BLL_MC_NM LIKE '%OOO%'
+                                AND BLL_SV_DC IN (
+                                    SELECT SV_C
+                                    FROM WPD_T_SV_SNGL_PRP_INF
+                                )
+                            GROUP BY month
+                        )
+                ) AS monthly_discounts,
+                (
+                    SELECT MLIM_AM
+                    FROM WPD_T_SV_SNGL_PRP_INF
+                    WHERE SV_C = 'SP03608'
+                ) - COALESCE(
+                    (
+                        SELECT SUM(BLL_SV_AM) AS total_discount
+                        FROM WBM_T_BLL_SPEC_IZ
+                        WHERE ACCTNO = 'A'
+                            AND SL_DT BETWEEN strftime('%Y%m%d', date('now', 'start of month')) AND strftime(
+                                '%Y%m%d',
+                                date('now', 'start of month', '+1 month', '-1 day')
+                            )
+                            AND BLL_MC_NM LIKE '%OOO%'
+                            AND BLL_SV_DC IN (
+                                SELECT SV_C
+                                FROM WPD_T_SV_SNGL_PRP_INF
+                            )
+                    ),
+                    0
+                ) AS remaining_discount_limit,
+                (
+                    SELECT json_group_array(EVN_BULT_TIT_NM)
+                    FROM WLP_T_EVN_INF
+                    WHERE EVN_BULT_TIT_NM LIKE '%OOO%'
+                        AND EVN_SDT <= strftime('%Y%m%d', 'now')
+                        AND EVN_EDT >= strftime('%Y%m%d', 'now')
+                ) AS recommended_events;
+        SQL result:  [('[{"month":"2024-07","total_spent":14000},{"month":"2024-08","total_spent":43200},{"month":"2024-09","total_spent":44460}]', '[{"month":"2024-08","total_discount":10000},{"month":"2024-09","total_discount":6040}]', 4540, '["안심쇼핑 신청하면 OOO 쿠폰 증정","5월 국세·지방세 납부하고 OOO 커피쿠폰 받자"]')]
+        Answer: '2024년 7월부터 9월까지 'A' 고객이 OOO에서 사용한 총액은 다음과 같습니다: 7월에는 14,000원, 8월에는 43,200원, 9월에는 44,460원입니다. \n\n할인 금액은 8월에 10,000원, 9월에 6,040원을 받았습니다. 이번 달 남은 할인 한도는 4,540원입니다.\n\nOOO와 관련된 추천 이벤트로는 "안심쇼핑 신청하면 OOO 쿠폰 증정"과 "5월 국세·지방세 납부하고 OOO 커피쿠폰 받자"가 있습니다.'
     '''
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
         Use the following format:
@@ -222,7 +303,7 @@ def sql_result(llm, db, question):
             # print(answer)
         else:
             final = result
-            print("-"*200)
+            print("-"*100)
             print("SQL query: ", corrected_sql_query)
             print("SQL result: ", result)
 
@@ -242,7 +323,7 @@ if __name__ == "__main__":
     llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
     # db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
-    db = SQLDatabase.from_uri("sqlite:///data_v2.db")
+    db = SQLDatabase.from_uri("sqlite:///data_v2_1.db")
     print(db.dialect)
 
     print(db.get_usable_table_names())
@@ -250,6 +331,11 @@ if __name__ == "__main__":
     print("-"*200)
     # question = input("DB 질문을 입력하세요: ")
     # question = "24. 7~9월까지 '70018819695' 고객이 스타벅스에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘"
-    question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제일 별 결제금액을 알려줘. 그리고 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘"
+    # question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제일 별 결제금액을 알려줘. 그리고 보유카드 중에 할인 받은 상품이 있다면 얼마를 할인 받았는지, 이번 달 할인 한도가 얼마나 남았는지도 알려줘"
+    # question = "24. 7~10월까지 '70018819695' 고객이 사용한 금액을 카드 별로 알려줘"
+    # question = "24. 7~9월까지 '70018819695' 고객이 통신 요금으로 납부한 금액과 할인 받은 금액을 알려줘"
+    # question = "'70018819695' 고객이 결제한 전체 카드 별로 각각 9월 달에 받은 혜택 금액과 이번 달 잔여 한도를 알려줘"
+    
+    question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제월 별 결제금액을 알려줘. 그리고 보유카드 중에 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘. 마지막으로, 스타벅스와 관련해서 추천해줄만한 이벤트와 UMS 메시지를 알려줘."
 
     sql_result(llm, db, question)
