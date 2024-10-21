@@ -122,10 +122,14 @@ def sql_result(llm, db, question):
         else:
             final = result
             print("-"*100)
-            print("SQL query: ", corrected_sql_query)
-            print("SQL result: ", result)
+            if fix == 1:
+                print("SQL query: ", generated_sql_query)
+                answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+            else:
+                print("SQL query: ", corrected_sql_query)
+                answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
 
-            answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+            print("SQL result: ", result)
             print(answer)
             break
         fix += 1

@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, torch
 import sqlite3
 import logging
 from openai import OpenAI
@@ -12,12 +12,39 @@ from langchain_community.tools.sql_database.tool import QuerySQLDataBaseTool
 from langchain.chains import create_sql_query_chain
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from langchain_community.llms import HuggingFacePipeline
 from dotenv import load_dotenv
 
 # logging.basicConfig(level=logging.DEBUG)
 dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
 load_dotenv(dotenv_path)
 api_key = os.getenv("OPENAI_API_KEY")
+
+def load_llama_model(model_id):
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+    )
+    model.eval()
+
+    # Hugging Face 파이프라인 생성
+    hf_pipeline = pipeline(
+        "text-generation", 
+        model=model, 
+        tokenizer=tokenizer, 
+        # max_length=8192, 
+        temperature=0.1, 
+        top_p=0.1,
+        # truncation=True
+    )
+
+    # Langchain에서 사용할 수 있는 Hugging Face Pipeline LLM 객체 생성
+    llm = HuggingFacePipeline(pipeline=hf_pipeline)
+    
+    return llm
 
 def generate_natural_language_answer(llm, question, sql_query, sql_result):
     # 프롬프트 템플릿 정의
@@ -304,10 +331,14 @@ def sql_result(llm, db, question):
         else:
             final = result
             print("-"*100)
-            print("SQL query: ", corrected_sql_query)
-            print("SQL result: ", result)
+            if fix == 1:
+                print("SQL query: ", generated_sql_query)
+                answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+            else:
+                print("SQL query: ", corrected_sql_query)
+                answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
 
-            answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+            print("SQL result: ", result)
             print(answer)
             break
         fix += 1
@@ -316,14 +347,16 @@ def sql_result(llm, db, question):
         print("##### SQL Execution Error No Result #####")
 
 if __name__ == "__main__":
+    model_id = 'MLP-KTLim/llama-3-Korean-Bllossom-8B'
+    llm = load_llama_model(model_id)
     # db_name = input("Input DB name: ")
     # llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
-    llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
+    # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
     # db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
-    db = SQLDatabase.from_uri("sqlite:///data_v2_1.db")
+    db = SQLDatabase.from_uri("sqlite:///app.db")
     print(db.dialect)
 
     print(db.get_usable_table_names())
