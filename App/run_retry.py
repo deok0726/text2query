@@ -30,7 +30,6 @@ def load_llama_model(model_id):
     )
     model.eval()
 
-    # Hugging Face 파이프라인 생성
     hf_pipeline = pipeline(
         "text-generation", 
         model=model, 
@@ -38,10 +37,10 @@ def load_llama_model(model_id):
         # max_length=8192, 
         temperature=0.1, 
         top_p=0.1,
-        # truncation=True
+        # truncation=True,
+        return_full_text=False
     )
 
-    # Langchain에서 사용할 수 있는 Hugging Face Pipeline LLM 객체 생성
     llm = HuggingFacePipeline(pipeline=hf_pipeline)
     
     return llm
@@ -58,58 +57,23 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
     Answer: '''
     
     answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
-    response = llm.invoke(answer_prompt)
+    max_position_embeddings = llm.pipeline.model.config.max_position_embeddings
+    max_input_length = len(llm.pipeline.tokenizer.encode(answer_prompt))
+
+    max_new_tokens = max_position_embeddings - max_input_length
+    if max_new_tokens < 0:
+        logging.error("입력 데이터가 너무 큽니다. 입력 텍스트의 길이를 줄이거나 모델의 설정을 확인하세요.")
+        return None
+    
+    try:
+        response = llm.invoke(answer_prompt, max_new_tokens=max_new_tokens)
+    except ValueError as e:
+        logging.error(f"Error generating answer: {str(e)}")
+        response = None
     
     return response
 
 def sql_result(llm, db, question):
-    few_shot_examples = '''
-        Example 1)
-        Question: 24. 7~9월까지 '70018819695' 고객이 스타벅스에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 할인 한도가 얼마나 남았는지 알려줘
-        SQLQuery: WITH monthly_discounts AS (
-                    SELECT 
-                        strftime('%Y-%m', SL_DT) AS month,
-                        SUM(BLL_SV_AM) AS total_discount
-                    FROM 
-                        WBM_T_BLL_SPEC_IZ
-                    WHERE 
-                        ACCTNO = '70018819695'
-                        AND SL_DT BETWEEN '20240701' AND '20240930'
-                        AND BLL_MC_NM LIKE '%스타벅스%'
-                        AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)
-                    GROUP BY 
-                        strftime('%Y-%m', SL_DT)
-                ),
-                total_spent AS (
-                    SELECT 
-                        SUM(COALESCE(BIL_PRN, SL_AM)) AS total_spent
-                    FROM 
-                        WBM_T_BLL_SPEC_IZ
-                    WHERE 
-                        ACCTNO = '70018819695'
-                        AND SL_DT BETWEEN '20240701' AND '20240930'
-                        AND BLL_MC_NM LIKE '%스타벅스%'
-                ),
-                total_discounted AS (
-                    SELECT 
-                        SUM(BLL_SV_AM) AS total_discounted
-                    FROM 
-                        WBM_T_BLL_SPEC_IZ
-                    WHERE 
-                        ACCTNO = '70018819695'
-                        AND SL_DT BETWEEN '20240701' AND '20240930'
-                        AND BLL_MC_NM LIKE '%스타벅스%'
-                        AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)
-                )
-                SELECT 
-                    (SELECT total_spent FROM total_spent) AS total_spent,
-                    (SELECT total_discounted FROM total_discounted) AS total_discounted,
-                    (SELECT MLIM_AM FROM WPD_T_SV_SNGL_PRP_INF WHERE SV_C = 'SP03608') - COALESCE((SELECT total_discount FROM monthly_discounts WHERE month = strftime('%Y-%m', 'now')), 0) AS remaining_discount_limit;
-
-        SQLResult: [(101660, 16040, 10000)]
-        Answer: 고객 '70018819695'는 7월부터 9월까지 스타벅스에서 총 101,660원을 사용했습니다. 보유한 카드 중 할인 가능한 상품을 통해 16,040원의 할인을 받았으며, 현재 할인 한도는 10,000원이 남았습니다.
-    '''
-
     few_shots = '''
         Example 1)
         Question: 24. 7~9월까지 'A' 고객이 OOO에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘
@@ -284,7 +248,7 @@ def sql_result(llm, db, question):
         "dialect": db.dialect, 
         "top_k": 1, 
         "few_shot_examples": few_shots})
-    print("SQL query: ", generated_sql_query.__repr__())
+    # print("SQL query: ", generated_sql_query.__repr__())
     
     execute = QuerySQLDataBaseTool(db=db)
     
@@ -329,17 +293,18 @@ def sql_result(llm, db, question):
             # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
             # print(answer)
         else:
+            print("*-#-"*100)
             final = result
-            print("-"*100)
             if fix == 1:
-                print("SQL query: ", generated_sql_query)
+                print("generated SQL query: ", generated_sql_query)
                 answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
             else:
-                print("SQL query: ", corrected_sql_query)
+                print("correctedSQL query: ", corrected_sql_query)
                 answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
 
             print("SQL result: ", result)
             print(answer)
+            print("*-#-"*100)
             break
         fix += 1
     
@@ -365,10 +330,14 @@ if __name__ == "__main__":
     # question = input("DB 질문을 입력하세요: ")
     # question = "24. 7~9월까지 '70018819695' 고객이 스타벅스에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘"
     # question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제일 별 결제금액을 알려줘. 그리고 보유카드 중에 할인 받은 상품이 있다면 얼마를 할인 받았는지, 이번 달 할인 한도가 얼마나 남았는지도 알려줘"
-    # question = "24. 7~10월까지 '70018819695' 고객이 사용한 금액을 카드 별로 알려줘"
     # question = "24. 7~9월까지 '70018819695' 고객이 통신 요금으로 납부한 금액과 할인 받은 금액을 알려줘"
     # question = "'70018819695' 고객이 결제한 전체 카드 별로 각각 9월 달에 받은 혜택 금액과 이번 달 잔여 한도를 알려줘"
     
-    question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제월 별 결제금액을 알려줘. 그리고 보유카드 중에 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘. 마지막으로, 스타벅스와 관련해서 추천해줄만한 이벤트와 UMS 메시지를 알려줘."
-
-    sql_result(llm, db, question)
+    # question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제월 별 결제금액을 알려줘. 그리고 보유카드 중에 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘. 마지막으로, 스타벅스와 관련해서 추천해줄만한 이벤트와 UMS 메시지를 알려줘."
+    a = "24. 7~10월까지 '70018819695' 고객이 사용한 금액을 카드 별로 알려줘."
+    b = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 월 별 결제금액을 알려줘."
+    c = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘."
+    
+    questions = [a, b, c]
+    for question in questions:
+        sql_result(llm, db, question)

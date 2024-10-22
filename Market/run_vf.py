@@ -35,24 +35,30 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
     return response
 
 def sql_result(llm, db, question):
-    few_shot_examples = '''
+    few_shot_examples = '''        
         Example 1)
-        Question: 24.06.01~24.07.31 기간 동안 이벤트에 응모하고, 앱으로 단기카드대출을 10000원 이상 이용한 고객 리스트를 뽑아줘.
-        SQLQuery: "SELECT DISTINCT T1.CNO FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%' AND T3.STDT BETWEEN '20240604' AND '20240630' AND T3.SL_PD_DC = 3 AND T3.SL_AM > 10000;"
-        SQLResult: [('123456789010000', '345678901230000')]
-        Answer: 24.06.04~24.06.30 기간 내에 앱으로 단기카드대출을 10000원 이상 이용한 이벤트 응모 고객은 '123456789010000', '345678901230000'로 2 명 입니다.
+        Question: 24.03.02~24.03.31 기간 내에 이벤트에 응모하고, 앱을 통해 단기카드대출을 A원 이상 이용한 고객을 뽑아줘. 이벤트로 나가는 최종 오퍼 금액을 알려줘.
+        SQLQuery: "SELECT DISTINCT T1.CNO, COUNT(DISTINCT T1.CNO) * '혜택금액' AS TotalOfferAmount
+                    FROM WMK_T_CMP_APL_OJP AS T1
+                        INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID
+                        INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO
+                    WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%'
+                        AND T3.STDT BETWEEN '20240302' AND '20240331'
+                        AND T3.SL_AM > A
+                        AND T3.SL_PD_DC = 3
+                        AND T2.UMS_MSG_DTL_CN LIKE '%1만 포인트 적립%';"
         
         Example 2)
-        Question: 24.06.04~24.06.30 기간 내에 이벤트에 응모하고, 앱을 통해 단기카드대출을 10000원 이상 이용한 고객을 뽑아줘. 추출된 고객 수를 UMS메시지의 이벤트 제공 혜택 포인트와 곱해서 최종적으로 산출된 오퍼 금액을 알려줘.
-        SQLQuery: "SELECT COUNT(DISTINCT T1.CNO) * 10000 AS TotalOfferAmount FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%' AND T3.STDT BETWEEN '20240604' AND '20240630' AND T3.SL_AM > 10000 AND T3.SL_PD_DC = 3 AND T2.UMS_MSG_DTL_CN LIKE '%띵코인 1만 포인트 적립%';"
-        SQLResult: [(20000,)]
-        Answer: 24.06.04~24.06.30 기간 내에 단기카드대출을 10000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 띵코인 20000 포인트 입니다.
-        
-        Example 3)
-        Question: 24.06.01~24.07.31 기간 내에 이벤트에 응모하고, 일시불로 1000원 이상 결제한 고객을 뽑아줘. 추출된 고객 수를 UMS메시지의 이벤트 제공 혜택 금액과 곱해서 최종적으로 산출된 오퍼 금액을 알려줘.
-        SQLQuery: "SELECT COUNT(DISTINCT T1.CNO) * 5000 AS TotalOfferAmount FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%일시불%' AND T3.STDT BETWEEN '20240601' AND '20240731' AND T3.SL_AM > 1000 AND T3.SL_PD_DC = 1 AND T2.UMS_MSG_DTL_CN LIKE '%현금 5천 원%';"
-        SQLResult: [(10000,)]
-        Answer: 24.06.01~24.07.31 기간 내에 일시불을 1000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 10000 원 입니다.
+        Question: 24.03.02~24.03.31 기간 내에 이벤트에 응모하고, 일시불로 B원 이상 결제한 고객을 뽑아줘. 이벤트로 나가는 최종 오퍼 금액을 알려줘.
+        SQLQuery: "SELECT DISTINCT T1.CNO, COUNT(DISTINCT T1.CNO) * '혜택금액' AS TotalOfferAmount
+                    FROM WMK_T_CMP_APL_OJP AS T1
+                        INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID
+                        INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO
+                    WHERE T2.UMS_MSG_DTL_CN LIKE '%일시불%'
+                        AND T3.STDT BETWEEN '20240302' AND '20240331'
+                        AND T3.SL_AM > B
+                        AND T3.SL_PD_DC = 1
+                        AND T2.UMS_MSG_DTL_CN LIKE '%현금 5천 원%';"
     '''
 
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
@@ -77,7 +83,6 @@ def sql_result(llm, db, question):
     
     prompt = PromptTemplate.from_template(template)
     query_chain = create_sql_query_chain(llm, db, prompt=prompt)
-    # generated_sql_query = query_chain.invoke({"table_info": db.get_table_info(), "input": question, "dialect": db.dialect, "top_k": 1})
     generated_sql_query = query_chain.invoke({
         "table_info": db.get_table_info(), 
         "input": question, 
@@ -123,18 +128,17 @@ def sql_result(llm, db, question):
                 "error_message": error_message})
             
             result = execute.invoke({"query": corrected_sql_query})
-            # print("-"*200)
-            # print(result)
-
-            # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
-            # print(answer)
         else:
+            print("*"*100)
             final = result
-            # result = execute.invoke({"query": generated_sql_query})
-            print("-"*100)
-            print("SQL result: ", result)
+            if fix == 1:
+                print("generated SQL query: ", generated_sql_query)
+                answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+            else:
+                print("corrected SQL query: ", corrected_sql_query)
+                answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
 
-            answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+            print("SQL result: ", result)
             print(answer)
             break
         fix += 1
@@ -152,7 +156,7 @@ if __name__ == "__main__":
     print(db.get_usable_table_names())
     print("-"*200)
 
-    # question = input("DB 질문을 입력하세요: ")0
-    question = "24.06.04~24.06.30 기간 내에 이벤트 응모하고, 롯데카드로 앱에서 단기카드대출 10000원 이상 이용한 고객 리스트를 뽑아주세요. 고객들한테 나가야 하는 최종 혜택 금액도 계산해주세요."
+    # question = input("DB 질문을 입력하세요: ")
+    question = "24.06.04~24.06.30 기간 내에 이벤트 응모하고, 롯데카드 앱에서 단기카드대출 10000원 이상 이용한 고객 리스트를 뽑아주세요. 고객 별 지급 오퍼 금액과 고객 전체로 나가는 최종 오퍼 금액을 계산해주세요."
 
     sql_result(llm, db, question)

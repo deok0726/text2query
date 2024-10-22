@@ -1,4 +1,4 @@
-import os, torch
+import os, sys, torch
 import sqlite3
 import logging
 from openai import OpenAI
@@ -30,7 +30,6 @@ def load_llama_model(model_id):
     )
     model.eval()
 
-    # Hugging Face 파이프라인 생성
     hf_pipeline = pipeline(
         "text-generation", 
         model=model, 
@@ -39,15 +38,14 @@ def load_llama_model(model_id):
         temperature=0.1, 
         top_p=0.1,
         # truncation=True
-        return_full_text=False
     )
 
-    # Langchain에서 사용할 수 있는 Hugging Face Pipeline LLM 객체 생성
     llm = HuggingFacePipeline(pipeline=hf_pipeline)
     
     return llm
 
 def generate_natural_language_answer(llm, question, sql_query, sql_result):
+    # 프롬프트 템플릿 정의
     answer_prompt_template = '''
     Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
 
@@ -77,39 +75,50 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
 def sql_result(llm, db, question):
     few_shot_examples = '''
         Example 1)
-        Question: 24.06.01~24.07.31 기간 동안 이벤트에 응모하고, 앱으로 단기카드대출을 10000원 이상 이용한 고객 리스트를 뽑아줘.
-        SQLQuery: "SELECT DISTINCT T1.CNO FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%' AND T3.STDT BETWEEN '20240604' AND '20240630' AND T3.SL_PD_DC = 3 AND T3.SL_AM > 10000;"
-        SQLResult: [('123456789010000', '345678901230000')]
-        Answer: 24.06.04~24.06.30 기간 내에 앱으로 단기카드대출을 10000원 이상 이용한 이벤트 응모 고객은 '123456789010000', '345678901230000'로 2 명 입니다.
-        
-        Example 2)
-        Question: 24.06.04~24.06.30 기간 내에 이벤트에 응모하고, 앱을 통해 단기카드대출을 10000원 이상 이용한 고객을 뽑아줘. 추출된 고객 수를 UMS메시지의 이벤트 제공 혜택 포인트와 곱해서 최종적으로 산출된 오퍼 금액을 알려줘.
-        SQLQuery: "SELECT COUNT(DISTINCT T1.CNO) * 10000 AS TotalOfferAmount FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%' AND T3.STDT BETWEEN '20240604' AND '20240630' AND T3.SL_AM > 10000 AND T3.SL_PD_DC = 3 AND T2.UMS_MSG_DTL_CN LIKE '%띵코인 1만 포인트 적립%';"
-        SQLResult: [(20000,)]
-        Answer: 24.06.04~24.06.30 기간 내에 단기카드대출을 10000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 띵코인 20000 포인트 입니다.
-        
-        Example 3)
-        Question: 24.06.01~24.07.31 기간 내에 이벤트에 응모하고, 일시불로 1000원 이상 결제한 고객을 뽑아줘. 추출된 고객 수를 UMS메시지의 이벤트 제공 혜택 금액과 곱해서 최종적으로 산출된 오퍼 금액을 알려줘.
-        SQLQuery: "SELECT COUNT(DISTINCT T1.CNO) * 5000 AS TotalOfferAmount FROM WMK_T_CMP_APL_OJP AS T1 INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO WHERE T2.UMS_MSG_DTL_CN LIKE '%일시불%' AND T3.STDT BETWEEN '20240601' AND '20240731' AND T3.SL_AM > 1000 AND T3.SL_PD_DC = 1 AND T2.UMS_MSG_DTL_CN LIKE '%현금 5천 원%';"
-        SQLResult: [(10000,)]
-        Answer: 24.06.01~24.07.31 기간 내에 일시불을 1000원 이상 이용한 고객 대상 제공되는 이벤트 총 금액은 10000 원 입니다.
+        Question: 24. 7~9월까지 '70018819695' 고객이 스타벅스에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 할인 한도가 얼마나 남았는지 알려줘
+        SQLQuery: WITH monthly_discounts AS (
+                    SELECT 
+                        strftime('%Y-%m', SL_DT) AS month,
+                        SUM(BLL_SV_AM) AS total_discount
+                    FROM 
+                        WBM_T_BLL_SPEC_IZ
+                    WHERE 
+                        ACCTNO = '70018819695'
+                        AND SL_DT BETWEEN '20240701' AND '20240930'
+                        AND BLL_MC_NM LIKE '%스타벅스%'
+                        AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)
+                    GROUP BY 
+                        strftime('%Y-%m', SL_DT)
+                ),
+                total_spent AS (
+                    SELECT 
+                        SUM(COALESCE(BIL_PRN, SL_AM)) AS total_spent
+                    FROM 
+                        WBM_T_BLL_SPEC_IZ
+                    WHERE 
+                        ACCTNO = '70018819695'
+                        AND SL_DT BETWEEN '20240701' AND '20240930'
+                        AND BLL_MC_NM LIKE '%스타벅스%'
+                ),
+                total_discounted AS (
+                    SELECT 
+                        SUM(BLL_SV_AM) AS total_discounted
+                    FROM 
+                        WBM_T_BLL_SPEC_IZ
+                    WHERE 
+                        ACCTNO = '70018819695'
+                        AND SL_DT BETWEEN '20240701' AND '20240930'
+                        AND BLL_MC_NM LIKE '%스타벅스%'
+                        AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)
+                )
+                SELECT 
+                    (SELECT total_spent FROM total_spent) AS total_spent,
+                    (SELECT total_discounted FROM total_discounted) AS total_discounted,
+                    (SELECT MLIM_AM FROM WPD_T_SV_SNGL_PRP_INF WHERE SV_C = 'SP03608') - COALESCE((SELECT total_discount FROM monthly_discounts WHERE month = strftime('%Y-%m', 'now')), 0) AS remaining_discount_limit;
+
+        SQLResult: [(101660, 16040, 10000)]
+        Answer: 고객 '70018819695'는 7월부터 9월까지 스타벅스에서 총 101,660원을 사용했습니다. 보유한 카드 중 할인 가능한 상품을 통해 16,040원의 할인을 받았으며, 현재 할인 한도는 10,000원이 남았습니다.
     '''
-
-    # template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
-    #     Use the following format:
-
-    #     Question: "Question here"
-    #     SQLQuery: "SQL Query to run"
-    #     SQLResult: "Result of the SQLQuery"
-    #     Answer: "Final answer here"
-
-    #     Only use the following tables:
-
-    #     {table_info}.
-
-    #     DO NOT use non-existent tables or columns.
-
-    #     Question: {input}'''
 
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
         Use the following format:
@@ -140,7 +149,7 @@ def sql_result(llm, db, question):
         "dialect": db.dialect, 
         "top_k": 1, 
         "few_shot_examples": few_shot_examples})
-    print("SQL query: ", generated_sql_query.__repr__())
+    # print("SQL query: ", generated_sql_query.__repr__())
     
     execute = QuerySQLDataBaseTool(db=db)
     
@@ -185,13 +194,13 @@ def sql_result(llm, db, question):
             # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
             # print(answer)
         else:
+            print("*-#-"*100)
             final = result
-            print("-"*100)
             if fix == 1:
-                print("SQL query: ", generated_sql_query)
+                print("generated SQL query: ", generated_sql_query)
                 answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
             else:
-                print("SQL query: ", corrected_sql_query)
+                print("correctedSQL query: ", corrected_sql_query)
                 answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
 
             print("SQL result: ", result)
@@ -202,61 +211,9 @@ def sql_result(llm, db, question):
     if final is None:
         print("##### SQL Execution Error No Result #####")
 
-    # try:
-    #     result = execute.invoke({"query": generated_sql_query})
-    #     print("-"*200)
-    #     print("SQL result: ", result)
-
-    #     answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
-    #     print(answer)
-    # except sqlite3.OperationalError as e:
-    #     # SQL 쿼리 실행 중 발생한 OperationalError 예외 처리
-    #     print("-" * 200)
-    #     print(f"Error executing SQL query: {e}")
-    #     error_message = str(e)
-
-    #     new_template = '''
-    #         The following SQL query resulted in an error: {sql_query}
-
-    #         Error: {error_message}
-
-    #         Based on the provided table and column information, please correct the SQL query.
-
-    #         {table_info}
-
-    #         Question: {input}
-
-    #         SQLQuery: '''
-        
-    #     tables = db.get_usable_table_names()
-    #     table_info = {}
-
-    #     for table in tables:
-    #         table_columns = db.get_table_info(table)
-    #         column_names = [col["name"] for col in table_columns]
-    #         table_info[table] = column_names
-
-    #     table_info_str = "\n".join([f"Table: {table}, Columns: {', '.join(columns)}" for table, columns in table_info.items()])
-
-    #     prompt = PromptTemplate.from_template(new_template)
-    #     query_chain = create_sql_query_chain(llm, db, prompt=prompt)
-    #     corrected_sql_query = query_chain.invoke({"sql_query": result, "table_info": table_info_str, "input": question, "error_message": error_message})
-        
-    #     result = execute.invoke({"query": corrected_sql_query})
-    #     print("-"*200)
-    #     print(result)
-
-    #     answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
-    #     print(answer)
-
-    # except Exception as e:
-    #     print("-" * 200)
-    #     print(f"Error: {e}")
-
 if __name__ == "__main__":
     model_id = 'MLP-KTLim/llama-3-Korean-Bllossom-8B'
     llm = load_llama_model(model_id)
-
     # db_name = input("Input DB name: ")
     # llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
@@ -264,13 +221,19 @@ if __name__ == "__main__":
     # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
 
     # db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
-    db = SQLDatabase.from_uri(f"sqlite:///market.db")
-    # print(db.dialect)
+    db = SQLDatabase.from_uri("sqlite:///app.db")
+    print(db.dialect)
 
     print(db.get_usable_table_names())
     # print(db.get_table_info())
     print("-"*200)
-    # question = input("DB 질문을 입력하세요: ")0
-    question = "24.06.04~24.06.30 기간 내에 이벤트 응모하고, 롯데카드로 앱에서 단기카드대출 10000원 이상 이용한 고객 리스트를 뽑아주세요. 고객들한테 나가야 하는 최종 혜택 금액도 계산해주세요."
+    # question = input("DB 질문을 입력하세요: ")
+    # question = "24. 7~9월까지 '70018819695' 고객이 스타벅스에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘"
+    # question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제일 별 결제금액을 알려줘. 그리고 보유카드 중에 할인 받은 상품이 있다면 얼마를 할인 받았는지, 이번 달 할인 한도가 얼마나 남았는지도 알려줘"
+    question = "24. 7~10월까지 '70018819695' 고객이 사용한 금액을 카드 별로 알려줘"
+    # question = "24. 7~9월까지 '70018819695' 고객이 통신 요금으로 납부한 금액과 할인 받은 금액을 알려줘"
+    # question = "'70018819695' 고객이 결제한 전체 카드 별로 각각 9월 달에 받은 혜택 금액과 이번 달 잔여 한도를 알려줘"
+    
+    # question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제월 별 결제금액을 알려줘. 그리고 보유카드 중에 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘. 마지막으로, 스타벅스와 관련해서 추천해줄만한 이벤트와 UMS 메시지를 알려줘."
 
     sql_result(llm, db, question)

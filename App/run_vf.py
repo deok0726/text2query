@@ -120,13 +120,13 @@ def sql_result(llm, db, question):
             
             result = execute.invoke({"query": corrected_sql_query})
         else:
+            print("*"*100)
             final = result
-            print("-"*100)
             if fix == 1:
-                print("SQL query: ", generated_sql_query)
+                print("Generated SQL query: ", generated_sql_query)
                 answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
             else:
-                print("SQL query: ", corrected_sql_query)
+                print("Corrected SQL query: ", corrected_sql_query)
                 answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
 
             print("SQL result: ", result)
@@ -147,6 +147,7 @@ if __name__ == "__main__":
     db = SQLDatabase.from_uri("sqlite:///app_vf.db")
     print(db.get_usable_table_names())
     print("-"*200)
+    # print(db.get_table_info())
 
     # question = input("DB 질문을 입력하세요: ")
     a = "24. 7~10월까지 '70018819695' 고객이 사용한 금액을 카드 별로 알려줘."
