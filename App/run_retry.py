@@ -15,13 +15,36 @@ from langchain_core.output_parsers import StrOutputParser
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from langchain_community.llms import HuggingFacePipeline
 from dotenv import load_dotenv
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
 # logging.basicConfig(level=logging.DEBUG)
 dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
 load_dotenv(dotenv_path)
-api_key = os.getenv("OPENAI_API_KEY")
+openai_api_key = os.getenv("OPENAI_API_KEY")
+nvidia_api_key = os.getenv("NVIDIA_API_KEY")
 
-def load_llama_model(model_id):
+def load_llama_model():
+    client = OpenAI(
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key=nvidia_api_key
+    )
+    return client
+
+def load_nvidia_model():
+    client = ChatNVIDIA(
+        model="meta/llama-3.1-405b-instruct",
+        api_key=nvidia_api_key, 
+        temperature=0.1,
+        top_p=0.5,
+        max_tokens=1024,
+    )
+    
+    # for chunk in client.stream([{"role":"user","content":"client = OpenAI(\n  base_url = \"https://integrate.api.nvidia.com/v1\",\n  api_key = \"$API_KEY_REQUIRED_IF_EXECUTING_OUTSIDE_NGC\"\n) 에서 openai를 호출하는 이유는 무엇입니까?"}]): 
+    #   print(chunk.content, end="")
+
+    return client
+
+def load_hf_model(model_id):
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
@@ -46,16 +69,60 @@ def load_llama_model(model_id):
     return llm
 
 def generate_natural_language_answer(llm, question, sql_query, sql_result):
-    # 프롬프트 템플릿 정의
     answer_prompt_template = '''
-    Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
+        Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
 
-    Question: {question}
-    SQL Query: {sql_query}
-    SQL Result: {sql_result}
+        Question: {question}
+        SQL Query: {sql_query}
+        SQL Result: {sql_result}
 
-    Answer: '''
+        Answer: '''
     
+    answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
+    response = llm.invoke(answer_prompt)
+    
+    return response
+
+def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result):
+    answer_prompt_template = '''
+        Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
+
+        Question: {question}
+        SQL Query: {sql_query}
+        SQL Result: {sql_result}
+
+        Answer: '''
+    
+    answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
+
+    try:
+        final_answer = ""
+        print("Starting streaming response...")  # 디버깅 출력
+        for chunk in llm.stream([{"role": "user", "content": answer_prompt}]):
+            if hasattr(chunk, 'content') and chunk.content.strip():
+                final_answer += chunk.content
+
+        if final_answer.strip() == "":
+            logging.error("최종 답변이 비어 있습니다.")
+        else:
+            print(f"Final answer: {final_answer}")  # 최종 답변 출력
+
+        return final_answer.strip()
+    
+    except Exception as e:
+        logging.error(f"Error generating answer: {str(e)}")
+        return None
+
+def generate_natural_language_answer_hf(llm, question, sql_query, sql_result):
+    answer_prompt_template = '''
+        Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
+
+        Question: {question}
+        SQL Query: {sql_query}
+        SQL Result: {sql_result}
+
+        Answer: '''
+        
     answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
     max_position_embeddings = llm.pipeline.model.config.max_position_embeddings
     max_input_length = len(llm.pipeline.tokenizer.encode(answer_prompt))
@@ -74,6 +141,22 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
     return response
 
 def sql_result(llm, db, question):
+    few_shot_examples = '''
+        Example 1)
+        Question: 24. 1~3월까지 'A' 고객이 OOO에서 사용한 결제일 별 결제금액을 알려줘, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘. 마지막으로, OOO와 관련해서 추천해줄만한 이벤트나 UMS 내용이 있다면 알려줘.
+        SQLQuery: 
+            SELECT 
+                (SELECT json_group_array(json_object('month', month, 'total_spent', total_spent))
+                FROM (SELECT strftime('%Y-%m', substr(SL_DT, 1, 4) || '-' || substr(SL_DT, 5, 2) || '-' || substr(SL_DT, 7, 2)) AS month, SUM(COALESCE(BIL_PRN, SL_AM)) AS total_spent
+                    FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%' GROUP BY month)) AS monthly_spending,
+                (SELECT json_group_array(json_object('month', month, 'total_discount', total_discount))
+                FROM (SELECT strftime('%Y-%m', substr(SL_DT, 1, 4) || '-' || substr(SL_DT, 5, 2) || '-' || substr(SL_DT, 7, 2)) AS month, SUM(BLL_SV_AM) AS total_discount
+                    FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%' AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF) GROUP BY month)) AS monthly_discounts,
+                ((SELECT MLIM_AM FROM WPD_T_SV_SNGL_PRP_INF WHERE SV_C = 'SP*****') - COALESCE((SELECT SUM(BLL_SV_AM) AS total_discount
+                FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN strftime('%Y%m%d', date('now', 'start of month')) AND strftime('%Y%m%d', date('now', 'start of month', '+1 month', '-1 day')) AND BLL_MC_NM LIKE '%OOO%' AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)), 0)) AS remaining_discount_limit,
+                (SELECT json_group_array(EVN_BULT_TIT_NM) FROM WLP_T_EVN_INF WHERE EVN_BULT_TIT_NM LIKE '%OOO%' AND EVN_SDT <= strftime('%Y%m%d', 'now') AND EVN_EDT >= strftime('%Y%m%d', 'now')) AS recommended_events,
+                (SELECT json_group_array(UMS_MSG_CN) FROM WSC_T_UMS_FW_HIST WHERE UMS_MSG_CN LIKE '%OOO%') AS recommended_ums_messages;
+                '''
     few_shots = '''
         Example 1)
         Question: 24. 7~9월까지 'A' 고객이 OOO에서 얼마를 썼고, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘
@@ -241,7 +324,6 @@ def sql_result(llm, db, question):
     
     prompt = PromptTemplate.from_template(template)
     query_chain = create_sql_query_chain(llm, db, prompt=prompt)
-    # generated_sql_query = query_chain.invoke({"table_info": db.get_table_info(), "input": question, "dialect": db.dialect, "top_k": 1})
     generated_sql_query = query_chain.invoke({
         "table_info": db.get_table_info(), 
         "input": question, 
@@ -293,18 +375,18 @@ def sql_result(llm, db, question):
             # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
             # print(answer)
         else:
-            print("*-#-"*100)
+            print("-#"*100)
             final = result
             if fix == 1:
                 print("generated SQL query: ", generated_sql_query)
-                answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+                answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
             else:
-                print("correctedSQL query: ", corrected_sql_query)
-                answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
+                print("corrected SQL query: ", corrected_sql_query)
+                answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
 
             print("SQL result: ", result)
             print(answer)
-            print("*-#-"*100)
+            print("-#"*100)
             break
         fix += 1
     
@@ -312,16 +394,18 @@ def sql_result(llm, db, question):
         print("##### SQL Execution Error No Result #####")
 
 if __name__ == "__main__":
-    model_id = 'MLP-KTLim/llama-3-Korean-Bllossom-8B'
-    llm = load_llama_model(model_id)
-    # db_name = input("Input DB name: ")
+    # model_id = 'MLP-KTLim/llama-3-Korean-Bllossom-8B'
+    # llm = load_hf_model(model_id)
+
     # llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
-    # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
+    # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=openai_api_key)
+    llm = load_nvidia_model()
+
 
     # db = SQLDatabase.from_uri(f"sqlite:///{db_name}.db")
-    db = SQLDatabase.from_uri("sqlite:///app.db")
+    db = SQLDatabase.from_uri("sqlite:///app_vf.db")
     print(db.dialect)
 
     print(db.get_usable_table_names())
@@ -333,11 +417,13 @@ if __name__ == "__main__":
     # question = "24. 7~9월까지 '70018819695' 고객이 통신 요금으로 납부한 금액과 할인 받은 금액을 알려줘"
     # question = "'70018819695' 고객이 결제한 전체 카드 별로 각각 9월 달에 받은 혜택 금액과 이번 달 잔여 한도를 알려줘"
     
-    # question = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제월 별 결제금액을 알려줘. 그리고 보유카드 중에 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘. 마지막으로, 스타벅스와 관련해서 추천해줄만한 이벤트와 UMS 메시지를 알려줘."
     a = "24. 7~10월까지 '70018819695' 고객이 사용한 금액을 카드 별로 알려줘."
     b = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 월 별 결제금액을 알려줘."
     c = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘."
+    d = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제월 별 결제금액을 알려줘. 그리고 보유카드 중에 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘. 마지막으로, 스타벅스와 관련해서 추천해줄만한 이벤트와 UMS 메시지를 알려줘."
     
-    questions = [a, b, c]
+    # sql_result(llm, db, a)
+
+    questions = [a, b, c, d]
     for question in questions:
         sql_result(llm, db, question)

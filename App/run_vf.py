@@ -13,11 +13,57 @@ from langchain.chains import create_sql_query_chain
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
 # logging.basicConfig(level=logging.DEBUG)
 dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
 load_dotenv(dotenv_path)
-api_key = os.getenv("OPENAI_API_KEY")
+openai_api_key = os.getenv("OPENAI_API_KEY")
+nvidia_api_key = os.getenv("NVIDIA_API_KEY")
+
+def load_nvidia_model():
+    client = ChatNVIDIA(
+        model="meta/llama-3.1-405b-instruct",
+        api_key=nvidia_api_key, 
+        temperature=0.1,
+        top_p=0.5,
+        max_tokens=1024,
+    )
+    
+    # for chunk in client.stream([{"role":"user","content":"client = OpenAI(\n  base_url = \"https://integrate.api.nvidia.com/v1\",\n  api_key = \"$API_KEY_REQUIRED_IF_EXECUTING_OUTSIDE_NGC\"\n) 에서 openai를 호출하는 이유는 무엇입니까?"}]): 
+    #   print(chunk.content, end="")
+
+    return client
+
+def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result):
+    answer_prompt_template = '''
+        Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
+
+        Question: {question}
+        SQL Query: {sql_query}
+        SQL Result: {sql_result}
+
+        Answer: '''
+    
+    answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
+
+    try:
+        final_answer = ""
+        print("Starting streaming response...")
+        for chunk in llm.stream([{"role": "user", "content": answer_prompt}]):
+            if hasattr(chunk, 'content') and chunk.content.strip():
+                final_answer += chunk.content
+
+        # if final_answer.strip() == "":
+        #     logging.error("최종 답변이 비어 있습니다.")
+        # else:
+        #     print(f"Final answer: {final_answer}")
+
+        return final_answer.strip()
+    
+    except Exception as e:
+        logging.error(f"Error generating answer: {str(e)}")
+        return None
 
 def generate_natural_language_answer(llm, question, sql_query, sql_result):
     answer_prompt_template = '''
@@ -80,7 +126,7 @@ def sql_result(llm, db, question):
         "dialect": db.dialect, 
         "top_k": 1, 
         "few_shot_examples": few_shots})
-    print("SQL query: ", generated_sql_query.__repr__())
+    # print("SQL query: ", generated_sql_query.__repr__())
     
     execute = QuerySQLDataBaseTool(db=db)
     
@@ -125,9 +171,11 @@ def sql_result(llm, db, question):
             if fix == 1:
                 print("Generated SQL query: ", generated_sql_query)
                 answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+                # answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
             else:
                 print("Corrected SQL query: ", corrected_sql_query)
                 answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
+                # answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
 
             print("SQL result: ", result)
             print(answer)
@@ -139,10 +187,11 @@ def sql_result(llm, db, question):
         return
 
 if __name__ == "__main__":
-    # llm = Ollama(model="llama3.1:latest", temperature=0)
+    llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
-    llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=api_key)
+    # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=openai_api_key)
+    # llm = load_nvidia_model()
 
     db = SQLDatabase.from_uri("sqlite:///app_vf.db")
     print(db.get_usable_table_names())
