@@ -14,12 +14,24 @@ from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langchain_anthropic import ChatAnthropic
 
 # logging.basicConfig(level=logging.DEBUG)
 dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
 load_dotenv(dotenv_path)
 openai_api_key = os.getenv("OPENAI_API_KEY")
 nvidia_api_key = os.getenv("NVIDIA_API_KEY")
+anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+
+def load_anthropic_model():
+    client = ChatAnthropic(
+        model="claude-3-5-sonnet-20241022",
+        api_key=anthropic_api_key,
+        temperature=0,
+        max_tokens=1024,
+    )
+    
+    return client 
 
 def load_nvidia_model():
     client = ChatNVIDIA(
@@ -34,6 +46,27 @@ def load_nvidia_model():
     #   print(chunk.content, end="")
 
     return client
+
+def generate_natural_language_answer_anthropic(llm, question, sql_query, sql_result):
+    answer_prompt_template = '''
+        Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
+
+        Question: {question}
+        SQL Query: {sql_query}
+        SQL Result: {sql_result}
+
+        Answer: '''
+    
+    answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
+
+    response = llm.invoke(
+        model="claude-3-5-sonnet-20241022",
+        input=answer_prompt,
+        max_tokens=1024,
+        temperature=0,
+    )
+    
+    return response
 
 def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result):
     answer_prompt_template = '''
@@ -180,11 +213,13 @@ def sql_result(llm, db, question):
             if fix == 1:
                 print("generated SQL query: ", generated_sql_query)
                 # answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
-                answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
+                answer = generate_natural_language_answer_anthropic(llm, question, generated_sql_query, result)
+                # answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
             else:
                 print("corrected SQL query: ", corrected_sql_query)
                 # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
-                answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
+                answer = generate_natural_language_answer_anthropic(llm, question, corrected_sql_query, result)
+                # answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
 
             print("SQL result: ", result)
             print(answer)
@@ -199,7 +234,8 @@ if __name__ == "__main__":
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
     # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=openai_api_key)
-    llm = load_nvidia_model()
+    # llm = load_nvidia_model()
+    llm = load_anthropic_model()
 
     db = SQLDatabase.from_uri(f"sqlite:///market_vf.db")
     print(db.get_usable_table_names())
