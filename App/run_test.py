@@ -24,6 +24,7 @@ load_dotenv(dotenv_path)
 openai_api_key = os.getenv("OPENAI_API_KEY")
 nvidia_api_key = os.getenv("NVIDIA_API_KEY")
 anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+google_api_key = os.getenv("GOOGLE_API_KEY")
 
 
 def load_anthropic_model():
@@ -36,7 +37,6 @@ def load_anthropic_model():
     
     return client 
     
-
 def load_llama_model():
     client = OpenAI(
         base_url="https://integrate.api.nvidia.com/v1",

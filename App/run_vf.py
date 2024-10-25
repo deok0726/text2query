@@ -1,20 +1,21 @@
-import os, sys
-import sqlite3
+import os, torch
 import logging
 from openai import OpenAI
-from operator import itemgetter
+import google.generativeai as genai
+
 from langchain_openai import ChatOpenAI
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
 from langchain_community.llms import Ollama
+from langchain_anthropic import ChatAnthropic
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langchain_google_genai import ChatGoogleGenerativeAI
+
 from langchain_community.utilities import SQLDatabase
 from langchain_community.tools.sql_database.tool import QuerySQLDataBaseTool
 from langchain.chains import create_sql_query_chain
 from langchain.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from langchain_community.llms import HuggingFacePipeline
 from dotenv import load_dotenv
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
-from langchain_anthropic import ChatAnthropic
 
 # logging.basicConfig(level=logging.DEBUG)
 dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
@@ -22,7 +23,57 @@ load_dotenv(dotenv_path)
 openai_api_key = os.getenv("OPENAI_API_KEY")
 nvidia_api_key = os.getenv("NVIDIA_API_KEY")
 anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+google_api_key = os.getenv("GOOGLE_API_KEY")
 
+def load_google_model():
+    genai.configure(api_key=google_api_key)
+
+    # generation_config = {
+    #     "temperature": 0.1,
+    #     "top_p": 0.5,
+    #     # "top_k": 64,
+    #     "max_output_tokens": 8192,
+    #     "response_mime_type": "text/plain",
+    # }
+
+    # model = genai.GenerativeModel(
+    #     model_name="gemini-1.5-pro",
+    #     generation_config=generation_config,
+    # )
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-1.5-pro",
+        temperature=0.1,
+        top_p=0.5,
+        max_tokens=8192,
+        timeout=None,
+    )
+
+    return llm
+
+def load_hf_model(model_id):
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+    )
+    model.eval()
+
+    hf_pipeline = pipeline(
+        "text-generation", 
+        model=model, 
+        tokenizer=tokenizer, 
+        max_length=16384, 
+        temperature=0.1, 
+        top_p=0.5,
+        truncation=True,
+        return_full_text=False
+    )
+
+    llm = HuggingFacePipeline(pipeline=hf_pipeline)
+    
+    return llm
 
 def load_anthropic_model():
     client = ChatAnthropic(
@@ -43,31 +94,7 @@ def load_nvidia_model():
         max_tokens=1024,
     )
     
-    # for chunk in client.stream([{"role":"user","content":"client = OpenAI(\n  base_url = \"https://integrate.api.nvidia.com/v1\",\n  api_key = \"$API_KEY_REQUIRED_IF_EXECUTING_OUTSIDE_NGC\"\n) 에서 openai를 호출하는 이유는 무엇입니까?"}]): 
-    #   print(chunk.content, end="")
-
     return client
-
-def generate_natural_language_answer_anthropic(llm, question, sql_query, sql_result):
-    answer_prompt_template = '''
-        Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
-
-        Question: {question}
-        SQL Query: {sql_query}
-        SQL Result: {sql_result}
-
-        Answer: '''
-    
-    answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
-
-    response = llm.invoke(
-        model="claude-3-5-sonnet-20241022",
-        input=answer_prompt,
-        max_tokens=1024,
-        temperature=0,
-    )
-    
-    return response
 
 def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result):
     answer_prompt_template = '''
@@ -87,12 +114,6 @@ def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result
         for chunk in llm.stream([{"role": "user", "content": answer_prompt}]):
             if hasattr(chunk, 'content') and chunk.content.strip():
                 final_answer += chunk.content
-
-        # if final_answer.strip() == "":
-        #     logging.error("최종 답변이 비어 있습니다.")
-        # else:
-        #     print(f"Final answer: {final_answer}")
-
         return final_answer.strip()
     
     except Exception as e:
@@ -101,13 +122,13 @@ def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result
 
 def generate_natural_language_answer(llm, question, sql_query, sql_result):
     answer_prompt_template = '''
-    Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
+        Given the following user question, corresponding SQL query, and SQL result, answer the user question in natural language in Korean.
 
-    Question: {question}
-    SQL Query: {sql_query}
-    SQL Result: {sql_result}
+        Question: {question}
+        SQL Query: {sql_query}
+        SQL Result: {sql_result}
 
-    Answer: '''
+        Answer: '''
     
     answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
     response = llm.invoke(answer_prompt)
@@ -160,7 +181,6 @@ def sql_result(llm, db, question):
         "dialect": db.dialect, 
         "top_k": 1, 
         "few_shot_examples": few_shots})
-    # print("SQL query: ", generated_sql_query.__repr__())
     
     execute = QuerySQLDataBaseTool(db=db)
     
@@ -204,13 +224,11 @@ def sql_result(llm, db, question):
             final = result
             if fix == 1:
                 print("Generated SQL query: ", generated_sql_query)
-                # answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
-                answer = generate_natural_language_answer_anthropic(llm, question, generated_sql_query, result)
+                answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
                 # answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
             else:
                 print("Corrected SQL query: ", corrected_sql_query)
-                # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
-                answer = generate_natural_language_answer_anthropic(llm, question, corrected_sql_query, result)
+                answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
                 # answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
 
             print("SQL result: ", result)
@@ -228,7 +246,10 @@ if __name__ == "__main__":
     # llm = Ollama(model="codellama:70b", temperature=0)
     # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=openai_api_key)
     # llm = load_nvidia_model()
-    llm = load_anthropic_model()
+    # llm = load_anthropic_model()
+    # llm = load_hf_model('MLP-KTLim/llama-3-Korean-Bllossom-8B')
+
+    llm = load_google_model()
 
     db = SQLDatabase.from_uri("sqlite:///app_vf.db")
     print(db.get_usable_table_names())
