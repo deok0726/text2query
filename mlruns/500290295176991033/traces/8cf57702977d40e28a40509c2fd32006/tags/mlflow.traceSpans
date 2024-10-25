@@ -1,0 +1,1 @@
+[{"name": "ChatAnthropic", "type": "CHAT_MODEL", "outputs": ["generations", "llm_output", "run", "type"]}]

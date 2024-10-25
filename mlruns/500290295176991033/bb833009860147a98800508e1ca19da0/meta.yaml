@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/500290295176991033/bb833009860147a98800508e1ca19da0/artifacts
+end_time: 1729846011170
+entry_point_name: ''
+experiment_id: '500290295176991033'
+lifecycle_stage: active
+run_id: bb833009860147a98800508e1ca19da0
+run_name: langchain-sincere-croc-108
+run_uuid: bb833009860147a98800508e1ca19da0
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1729845993476
+status: 3
+tags: []
+user_id: pj04000

@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/500290295176991033/661083f572144fc0a122663d57e320f7/artifacts
+end_time: 1729846192594
+entry_point_name: ''
+experiment_id: '500290295176991033'
+lifecycle_stage: active
+run_id: 661083f572144fc0a122663d57e320f7
+run_name: langchain-spiffy-fox-201
+run_uuid: 661083f572144fc0a122663d57e320f7
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1729846192558
+status: 3
+tags: []
+user_id: pj04000

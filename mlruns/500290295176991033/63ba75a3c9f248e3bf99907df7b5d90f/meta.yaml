@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/500290295176991033/63ba75a3c9f248e3bf99907df7b5d90f/artifacts
+end_time: 1729846252167
+entry_point_name: ''
+experiment_id: '500290295176991033'
+lifecycle_stage: active
+run_id: 63ba75a3c9f248e3bf99907df7b5d90f
+run_name: langchain-debonair-snail-283
+run_uuid: 63ba75a3c9f248e3bf99907df7b5d90f
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1729846216631
+status: 3
+tags: []
+user_id: pj04000

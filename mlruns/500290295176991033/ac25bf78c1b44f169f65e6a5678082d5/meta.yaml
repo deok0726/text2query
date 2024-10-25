@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/500290295176991033/ac25bf78c1b44f169f65e6a5678082d5/artifacts
+end_time: 1729846052963
+entry_point_name: ''
+experiment_id: '500290295176991033'
+lifecycle_stage: active
+run_id: ac25bf78c1b44f169f65e6a5678082d5
+run_name: langchain-treasured-dove-757
+run_uuid: ac25bf78c1b44f169f65e6a5678082d5
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1729846024710
+status: 3
+tags: []
+user_id: pj04000

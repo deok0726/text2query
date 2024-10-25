@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/500290295176991033/634746a4594845d48373b62f51dbe75a/artifacts
+end_time: 1729846053013
+entry_point_name: ''
+experiment_id: '500290295176991033'
+lifecycle_stage: active
+run_id: 634746a4594845d48373b62f51dbe75a
+run_name: langchain-beautiful-eel-698
+run_uuid: 634746a4594845d48373b62f51dbe75a
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1729846052975
+status: 3
+tags: []
+user_id: pj04000

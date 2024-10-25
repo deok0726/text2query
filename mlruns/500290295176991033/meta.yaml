@@ -1,0 +1,6 @@
+artifact_location: mlflow-artifacts:/500290295176991033
+creation_time: 1729845969657
+experiment_id: '500290295176991033'
+last_update_time: 1729845969657
+lifecycle_stage: active
+name: text2query_app

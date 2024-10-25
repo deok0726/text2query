@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/500290295176991033/c51f81748eaa4e3cb83a8c5dae7c1797/artifacts
+end_time: 1729845982385
+entry_point_name: ''
+experiment_id: '500290295176991033'
+lifecycle_stage: active
+run_id: c51f81748eaa4e3cb83a8c5dae7c1797
+run_name: langchain-shivering-mouse-942
+run_uuid: c51f81748eaa4e3cb83a8c5dae7c1797
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1729845970235
+status: 3
+tags: []
+user_id: pj04000

@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/500290295176991033/b83d0e778f254139b2f89dfe9ec1d7da/artifacts
+end_time: 1729846133371
+entry_point_name: ''
+experiment_id: '500290295176991033'
+lifecycle_stage: active
+run_id: b83d0e778f254139b2f89dfe9ec1d7da
+run_name: langchain-angry-wolf-441
+run_uuid: b83d0e778f254139b2f89dfe9ec1d7da
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1729846108573
+status: 3
+tags: []
+user_id: pj04000

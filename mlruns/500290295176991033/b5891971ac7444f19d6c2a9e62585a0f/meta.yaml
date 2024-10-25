@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/500290295176991033/b5891971ac7444f19d6c2a9e62585a0f/artifacts
+end_time: 1729845993452
+entry_point_name: ''
+experiment_id: '500290295176991033'
+lifecycle_stage: active
+run_id: b5891971ac7444f19d6c2a9e62585a0f
+run_name: langchain-calm-cub-818
+run_uuid: b5891971ac7444f19d6c2a9e62585a0f
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1729845990065
+status: 3
+tags: []
+user_id: pj04000
