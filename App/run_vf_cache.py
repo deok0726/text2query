@@ -51,6 +51,30 @@ def load_google_model():
 
     return llm
 
+def load_hf_model(model_id):
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+    )
+    model.eval()
+
+    hf_pipeline = pipeline(
+        "text-generation", 
+        model=model, 
+        tokenizer=tokenizer, 
+        max_length=16384, 
+        temperature=0.1, 
+        top_p=0.5,
+        truncation=True,
+        return_full_text=False
+    )
+
+    llm = HuggingFacePipeline(pipeline=hf_pipeline)
+    
+    return llm
+
 def load_anthropic_model():
     client = ChatAnthropic(
         model="claude-3-5-sonnet-20241022",
@@ -70,9 +94,6 @@ def load_nvidia_model():
         max_tokens=1024,
     )
     
-    # for chunk in client.stream([{"role":"user","content":"client = OpenAI(\n  base_url = \"https://integrate.api.nvidia.com/v1\",\n  api_key = \"$API_KEY_REQUIRED_IF_EXECUTING_OUTSIDE_NGC\"\n) 에서 openai를 호출하는 이유는 무엇입니까?"}]): 
-    #   print(chunk.content, end="")
-
     return client
 
 def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result):
@@ -93,12 +114,6 @@ def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result
         for chunk in llm.stream([{"role": "user", "content": answer_prompt}]):
             if hasattr(chunk, 'content') and chunk.content.strip():
                 final_answer += chunk.content
-
-        # if final_answer.strip() == "":
-        #     logging.error("최종 답변이 비어 있습니다.")
-        # else:
-        #     print(f"Final answer: {final_answer}")
-
         return final_answer.strip()
     
     except Exception as e:
@@ -121,32 +136,20 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
     return response.content
 
 def sql_result(llm, db, question):
-    few_shot_examples = '''        
+    few_shots = '''
         Example 1)
-        Question: 24.03.02~24.03.31 기간 내에 이벤트에 응모하고, 앱을 통해 단기카드대출을 A원 이상 이용한 고객을 뽑아줘. 이벤트로 나가는 최종 오퍼 금액을 알려줘.
-        SQLQuery: "SELECT DISTINCT T1.CNO, COUNT(DISTINCT T1.CNO) * '혜택금액' AS TotalOfferAmount
-                    FROM WMK_T_CMP_APL_OJP AS T1
-                        INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID
-                        INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO
-                    WHERE T2.UMS_MSG_DTL_CN LIKE '%단기카드대출%'
-                        AND T3.STDT BETWEEN '20240302' AND '20240331'
-                        AND T3.SL_AM > A
-                        AND T3.SL_PD_DC = 3
-                        AND T2.UMS_MSG_DTL_CN LIKE '%1만 포인트 적립%';"
-        
-        Example 2)
-        Question: 24.03.02~24.03.31 기간 내에 이벤트에 응모하고, 일시불로 B원 이상 결제한 고객을 뽑아줘. 이벤트로 나가는 최종 오퍼 금액을 알려줘.
-        SQLQuery: "SELECT DISTINCT T1.CNO, COUNT(DISTINCT T1.CNO) * '혜택금액' AS TotalOfferAmount
-                    FROM WMK_T_CMP_APL_OJP AS T1
-                        INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID
-                        INNER JOIN WMG_T_D_SL_OUT AS T3 ON T1.CNO = T3.PSS_CNO
-                    WHERE T2.UMS_MSG_DTL_CN LIKE '%일시불%'
-                        AND T3.STDT BETWEEN '20240302' AND '20240331'
-                        AND T3.SL_AM > B
-                        AND T3.SL_PD_DC = 1
-                        AND T2.UMS_MSG_DTL_CN LIKE '%현금 5천 원%';"
-    '''
-
+        Question: 24. 1~3월까지 'A' 고객이 OOO에서 사용한 결제일 별 결제금액을 알려줘, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘. 마지막으로, OOO와 관련해서 추천해줄만한 이벤트나 UMS 내용이 있다면 알려줘.
+        SQLQuery: 
+            SELECT 
+                (SELECT SUM(SL_AM) FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%') AS total_spent,
+                (SELECT json_group_array(json_object('payment_date', SL_DT, 'amount', SL_AM)) 
+                FROM WBM_T_BLL_SPEC_IZ 
+                WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%') AS daily_spending,
+                (SELECT SUM(BLL_SV_AM) FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%' AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)) AS total_discount_received,
+                ((SELECT MLIM_AM FROM WPD_T_SV_SNGL_PRP_INF WHERE SV_C = 'SPOOOOO') - COALESCE((SELECT SUM(BLL_SV_AM) FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN strftime('%Y%m%d', date('now', 'start of month')) AND strftime('%Y%m%d', date('now', 'start of month', '+1 month', '-1 day')) AND BLL_MC_NM LIKE '%OOO%' AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)), 0)) AS remaining_discount_limit,
+                (SELECT json_group_array(EVN_BULT_TIT_NM) FROM WLP_T_EVN_INF WHERE EVN_BULT_TIT_NM LIKE '%OOO%' AND EVN_SDT <= strftime('%Y%m%d', 'now') AND EVN_EDT >= strftime('%Y%m%d', 'now')) AS recommended_events;
+                '''
+    
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
         Use the following format:
 
@@ -159,7 +162,7 @@ def sql_result(llm, db, question):
 
         {table_info}.
 
-        Here are some examples of previous questions and their corresponding SQL queries to help you understand the expected format:
+        Here are some examples of previous questions and their corresponding SQL queries to help you understand the table and column structure:
 
         {few_shot_examples}
 
@@ -174,19 +177,18 @@ def sql_result(llm, db, question):
         "input": question, 
         "dialect": db.dialect, 
         "top_k": 1, 
-        "few_shot_examples": few_shot_examples})
-    # print("SQL query: ", generated_sql_query.__repr__())
+        "few_shot_examples": few_shots})
     
     execute = QuerySQLDataBaseTool(db=db)
     
     fix = 1
-    retry = 4
+    retry = 6
     final = None
     result = execute.invoke({"query": generated_sql_query})
     while (fix < retry) :
         if "OperationalError" in result:
+            # print(f"##### Error executing SQL query ##### \n{result}")
             # print(f"Try {fix}...")
-            # print(f"### Error executing SQL query ### \n{result}")
             error_message = str(result)
 
             fixed_template = '''
@@ -218,38 +220,52 @@ def sql_result(llm, db, question):
             # print("*"*100)
             final = result
             if fix == 1:
-                print("\ngenerated SQL query: \n", generated_sql_query)
-                answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
-                # answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
+                print("\nGenerated SQL query: ")
+                print(generated_sql_query)
+                # answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+                answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
             else:
-                print("\ncorrected SQL query: \n", corrected_sql_query)
-                answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
-                # answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
+                print("\nCorrected SQL query: ")
+                print(corrected_sql_query)
+                # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
+                answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
 
-            print("\nSQL result: \n", result)
-            print("\nAnswer: \n", answer)
+            print("\nSQL result: ")
+            print(result)
+            print("\nAnswer: ")
+            print(answer)
             break
         fix += 1
     
     if final is None:
-        print("##### SQL Execution Error No Result #####")
+        print("########## SQL Execution Error: No Result ##########")
+        return
 
 if __name__ == "__main__":
     # llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
-    llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=openai_api_key)
-    # llm = load_nvidia_model()
+    # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=openai_api_key)
+    llm = load_nvidia_model()
     # llm = load_anthropic_model()
+    # llm = load_hf_model('MLP-KTLim/llama-3-Korean-Bllossom-8B')
     # llm = load_google_model()
 
-
-    db = SQLDatabase.from_uri(f"sqlite:///database/market_vf.db")
-    print("Tables in market_vf.db")
+    db = SQLDatabase.from_uri("sqlite:///database/app_vf.db")
+    print("Tables in app_vf.db")
     print(db.get_usable_table_names())
     print("-"*250)
+    # print(db.get_table_info())
 
     question = input("DB 질문을 입력하세요: ")
-    # question = "24.06.04~24.06.30 기간 내에 이벤트 응모하고, 롯데카드 앱에서 단기카드대출 10000원 이상 이용한 고객 리스트를 뽑아주세요. 고객 별 지급 오퍼 금액과 고객 전체로 나가는 최종 오퍼 금액을 계산해주세요."
-
+    # a = "24. 7~10월까지 '70018819695' 고객이 사용한 금액을 카드 별로 알려줘."
+    # b = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 월 별 결제금액을 알려줘."
+    # c = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘."
+    # d = "'70018819695' 고객에게 스타벅스와 관련해서 추천해줄만한 이벤트와 UMS 메시지를 알려줘."
+    # e = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제일 별 결제금액을 알려줘. 그리고 보유카드 중에 할인 받은 상품이 있다면 얼마를 할인 받았는지, 이번 달 할인 한도가 얼마나 남았는지도 알려줘. 그리고 스타벅스와 관련해서 추천해 줄만한 이벤트들이 있다면 그 내용도 알려줘"
+    
+    # questions = [a, b, c, d, e]
+    # for question in questions:
+    #     print("question:", question)
+    #     sql_result(llm, db, question)
     sql_result(llm, db, question)

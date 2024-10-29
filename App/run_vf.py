@@ -110,7 +110,7 @@ def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result
 
     try:
         final_answer = ""
-        print("Starting streaming response...")
+        # print("Starting streaming response...")
         for chunk in llm.stream([{"role": "user", "content": answer_prompt}]):
             if hasattr(chunk, 'content') and chunk.content.strip():
                 final_answer += chunk.content
@@ -133,7 +133,7 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
     answer_prompt = answer_prompt_template.format(question=question, sql_query=sql_query, sql_result=sql_result)
     response = llm.invoke(answer_prompt)
     
-    return response
+    return response.content
 
 def sql_result(llm, db, question):
     few_shots = '''
@@ -141,16 +141,13 @@ def sql_result(llm, db, question):
         Question: 24. 1~3월까지 'A' 고객이 OOO에서 사용한 결제일 별 결제금액을 알려줘, 보유카드 중에 할인을 받을 수 있는 상품이 있다면 얼마를 할인 받았고, 이번 달 할인 한도가 얼마나 남았는지 알려줘. 마지막으로, OOO와 관련해서 추천해줄만한 이벤트나 UMS 내용이 있다면 알려줘.
         SQLQuery: 
             SELECT 
-                (SELECT json_group_array(json_object('month', month, 'total_spent', total_spent))
-                FROM (SELECT strftime('%Y-%m', substr(SL_DT, 1, 4) || '-' || substr(SL_DT, 5, 2) || '-' || substr(SL_DT, 7, 2)) AS month, SUM(COALESCE(BIL_PRN, SL_AM)) AS total_spent
-                    FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%' GROUP BY month)) AS monthly_spending,
-                (SELECT json_group_array(json_object('month', month, 'total_discount', total_discount))
-                FROM (SELECT strftime('%Y-%m', substr(SL_DT, 1, 4) || '-' || substr(SL_DT, 5, 2) || '-' || substr(SL_DT, 7, 2)) AS month, SUM(BLL_SV_AM) AS total_discount
-                    FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%' AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF) GROUP BY month)) AS monthly_discounts,
-                ((SELECT MLIM_AM FROM WPD_T_SV_SNGL_PRP_INF WHERE SV_C = 'SP*****') - COALESCE((SELECT SUM(BLL_SV_AM) AS total_discount
-                FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN strftime('%Y%m%d', date('now', 'start of month')) AND strftime('%Y%m%d', date('now', 'start of month', '+1 month', '-1 day')) AND BLL_MC_NM LIKE '%OOO%' AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)), 0)) AS remaining_discount_limit,
-                (SELECT json_group_array(EVN_BULT_TIT_NM) FROM WLP_T_EVN_INF WHERE EVN_BULT_TIT_NM LIKE '%OOO%' AND EVN_SDT <= strftime('%Y%m%d', 'now') AND EVN_EDT >= strftime('%Y%m%d', 'now')) AS recommended_events,
-                (SELECT json_group_array(UMS_MSG_CN) FROM WSC_T_UMS_FW_HIST WHERE UMS_MSG_CN LIKE '%OOO%') AS recommended_ums_messages;
+                (SELECT SUM(SL_AM) FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%') AS total_spent,
+                (SELECT json_group_array(json_object('payment_date', SL_DT, 'amount', SL_AM)) 
+                FROM WBM_T_BLL_SPEC_IZ 
+                WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%') AS daily_spending,
+                (SELECT SUM(BLL_SV_AM) FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN '20240101' AND '20240331' AND BLL_MC_NM LIKE '%OOO%' AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)) AS total_discount_received,
+                ((SELECT MLIM_AM FROM WPD_T_SV_SNGL_PRP_INF WHERE SV_C = 'SPOOOOO') - COALESCE((SELECT SUM(BLL_SV_AM) FROM WBM_T_BLL_SPEC_IZ WHERE ACCTNO = 'A' AND SL_DT BETWEEN strftime('%Y%m%d', date('now', 'start of month')) AND strftime('%Y%m%d', date('now', 'start of month', '+1 month', '-1 day')) AND BLL_MC_NM LIKE '%OOO%' AND BLL_SV_DC IN (SELECT SV_C FROM WPD_T_SV_SNGL_PRP_INF)), 0)) AS remaining_discount_limit,
+                (SELECT json_group_array(EVN_BULT_TIT_NM) FROM WLP_T_EVN_INF WHERE EVN_BULT_TIT_NM LIKE '%OOO%' AND EVN_SDT <= strftime('%Y%m%d', 'now') AND EVN_EDT >= strftime('%Y%m%d', 'now')) AS recommended_events;
                 '''
     
     template = '''Given an input question, create a syntactically correct top {top_k} {dialect} query to run which should end with a semicolon.
@@ -190,8 +187,8 @@ def sql_result(llm, db, question):
     result = execute.invoke({"query": generated_sql_query})
     while (fix < retry) :
         if "OperationalError" in result:
-            print(f"##### Error executing SQL query ##### \n{result}")
-            print(f"Try {fix}...")
+            # print(f"##### Error executing SQL query ##### \n{result}")
+            # print(f"Try {fix}...")
             error_message = str(result)
 
             fixed_template = '''
@@ -220,18 +217,22 @@ def sql_result(llm, db, question):
             
             result = execute.invoke({"query": corrected_sql_query})
         else:
-            print("*"*100)
+            # print("*"*100)
             final = result
             if fix == 1:
-                print("Generated SQL query: ", generated_sql_query)
-                answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
-                # answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
+                print("\nGenerated SQL query: ")
+                print(generated_sql_query)
+                # answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+                answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
             else:
-                print("Corrected SQL query: ", corrected_sql_query)
-                answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
-                # answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
+                print("\nCorrected SQL query: ")
+                print(corrected_sql_query)
+                # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
+                answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
 
-            print("SQL result: ", result)
+            print("\nSQL result: ")
+            print(result)
+            print("\nAnswer: ")
             print(answer)
             break
         fix += 1
@@ -245,25 +246,26 @@ if __name__ == "__main__":
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
     # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=openai_api_key)
-    # llm = load_nvidia_model()
+    llm = load_nvidia_model()
     # llm = load_anthropic_model()
     # llm = load_hf_model('MLP-KTLim/llama-3-Korean-Bllossom-8B')
+    # llm = load_google_model()
 
-    llm = load_google_model()
-
-    db = SQLDatabase.from_uri("sqlite:///app_vf.db")
+    db = SQLDatabase.from_uri("sqlite:///database/app_vf.db")
+    print("Tables in app_vf.db")
     print(db.get_usable_table_names())
-    print("-"*200)
+    print("-"*250)
     # print(db.get_table_info())
 
-    # question = input("DB 질문을 입력하세요: ")
-    a = "24. 7~10월까지 '70018819695' 고객이 사용한 금액을 카드 별로 알려줘."
-    b = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 월 별 결제금액을 알려줘."
-    c = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘."
-    d = "'70018819695' 고객에게 스타벅스와 관련해서 추천해줄만한 이벤트와 UMS 메시지를 알려줘."
-    e = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제일 별 결제금액을 알려줘. 그리고 보유카드 중에 할인 받은 상품이 있다면 얼마를 할인 받았는지, 이번 달 할인 한도가 얼마나 남았는지도 알려줘. 그리고 스타벅스와 관련해서 추천해 줄만한 이벤트들이 있다면 그 내용도 알려줘"
+    question = input("DB 질문을 입력하세요: ")
+    # a = "24. 7~10월까지 '70018819695' 고객이 사용한 금액을 카드 별로 알려줘."
+    # b = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 월 별 결제금액을 알려줘."
+    # c = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 할인을 받았다면 할인 금액을 월 별로 알려주고, 이번 달 할인 한도가 얼마나 남았는지도 알려줘."
+    # d = "'70018819695' 고객에게 스타벅스와 관련해서 추천해줄만한 이벤트와 UMS 메시지를 알려줘."
+    # e = "24. 7~9월까지 '70018819695' 고객이 기간 동안 스타벅스에서 사용한 총액과 결제일 별 결제금액을 알려줘. 그리고 보유카드 중에 할인 받은 상품이 있다면 얼마를 할인 받았는지, 이번 달 할인 한도가 얼마나 남았는지도 알려줘. 그리고 스타벅스와 관련해서 추천해 줄만한 이벤트들이 있다면 그 내용도 알려줘"
     
-    questions = [a, b, c, d, e]
-    for question in questions:
-        print("question:", question)
-        sql_result(llm, db, question)
+    # questions = [a, b, c, d, e]
+    # for question in questions:
+    #     print("question:", question)
+    #     sql_result(llm, db, question)
+    sql_result(llm, db, question)
