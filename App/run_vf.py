@@ -18,7 +18,7 @@ from langchain_community.llms import HuggingFacePipeline
 from dotenv import load_dotenv
 
 # logging.basicConfig(level=logging.DEBUG)
-dotenv_path = os.path.join(os.path.dirname(__file__), '../config', '.env')
+dotenv_path = os.path.join(os.path.dirname(__file__), '../../config', '.env')
 load_dotenv(dotenv_path)
 openai_api_key = os.getenv("OPENAI_API_KEY")
 nvidia_api_key = os.getenv("NVIDIA_API_KEY")
