@@ -65,8 +65,8 @@ def load_nvidia_model():
     client = ChatNVIDIA(
         model="meta/llama-3.1-405b-instruct",
         api_key=nvidia_api_key, 
-        temperature=0.1,
-        top_p=0.5,
+        temperature=0,
+        # top_p=0.1,
         max_tokens=1024,
     )
     
@@ -89,7 +89,7 @@ def generate_natural_language_answer_nvidia(llm, question, sql_query, sql_result
 
     try:
         final_answer = ""
-        print("Starting streaming response...")
+        # print("Starting streaming response...")
         for chunk in llm.stream([{"role": "user", "content": answer_prompt}]):
             if hasattr(chunk, 'content') and chunk.content.strip():
                 final_answer += chunk.content
@@ -123,7 +123,7 @@ def generate_natural_language_answer(llm, question, sql_query, sql_result):
 def sql_result(llm, db, question):
     few_shot_examples = '''        
         Example 1)
-        Question: 24.03.02~24.03.31 기간 내에 이벤트에 응모하고, 앱을 통해 단기카드대출을 A원 이상 이용한 고객을 뽑아줘. 이벤트로 나가는 최종 오퍼 금액을 알려줘.
+        Question: 24.03.02~24.03.31 기간 내에 이벤트에 응모하고, 앱으로 단기카드대출을 A원 이상 이용한 고객을 뽑아줘. 이벤트로 나가는 최종 오퍼 금액을 알려줘.
         SQLQuery: "SELECT DISTINCT T1.CNO, COUNT(DISTINCT T1.CNO) * '혜택금액' AS TotalOfferAmount
                     FROM WMK_T_CMP_APL_OJP AS T1
                         INNER JOIN WSC_V_UMS_FW_HIST AS T2 ON T1.CMP_ID = T2.CMP_ID
@@ -132,6 +132,7 @@ def sql_result(llm, db, question):
                         AND T3.STDT BETWEEN '20240302' AND '20240331'
                         AND T3.SL_AM > A
                         AND T3.SL_PD_DC = 3
+                        AND T3.APL_PHC = 'M'
                         AND T2.UMS_MSG_DTL_CN LIKE '%1만 포인트 적립%';"
         
         Example 2)
@@ -219,12 +220,12 @@ def sql_result(llm, db, question):
             final = result
             if fix == 1:
                 print("\ngenerated SQL query: \n", generated_sql_query)
-                answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
-                # answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
+                # answer = generate_natural_language_answer(llm, question, generated_sql_query, result)
+                answer = generate_natural_language_answer_nvidia(llm, question, generated_sql_query, result)
             else:
                 print("\ncorrected SQL query: \n", corrected_sql_query)
-                answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
-                # answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
+                # answer = generate_natural_language_answer(llm, question, corrected_sql_query, result)
+                answer = generate_natural_language_answer_nvidia(llm, question, corrected_sql_query, result)
 
             print("\nSQL result: \n", result)
             print("\nAnswer: \n", answer)
@@ -238,8 +239,8 @@ if __name__ == "__main__":
     # llm = Ollama(model="llama3.1:latest", temperature=0)
     # llm = Ollama(model="llama3.1:70b", temperature=0)
     # llm = Ollama(model="codellama:70b", temperature=0)
-    llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=openai_api_key)
-    # llm = load_nvidia_model()
+    # llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=None, openai_api_key=openai_api_key)
+    llm = load_nvidia_model()
     # llm = load_anthropic_model()
     # llm = load_google_model()
 
